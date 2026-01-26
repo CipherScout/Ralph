@@ -1,0 +1,367 @@
+"""MCP tools for Ralph orchestrator using Claude Agent SDK format.
+
+Exposes Ralph's state management tools via MCP using the @tool decorator
+format expected by the Claude Agent SDK.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+from typing import Any
+
+from claude_agent_sdk import create_sdk_mcp_server, tool
+
+from ralph.tools import RalphTools, ToolResult
+
+# Validation constants
+TASK_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
+MAX_TASK_ID_LENGTH = 100
+MAX_DESCRIPTION_LENGTH = 5000
+MAX_LEARNING_LENGTH = 2000
+VALID_CATEGORIES = {"pattern", "antipattern", "architecture", "debugging", "build"}
+
+
+class ValidationError(Exception):
+    """Raised when input validation fails."""
+
+    pass
+
+
+def _validate_task_id(task_id: Any) -> str:
+    """Validate and return task ID."""
+    if not isinstance(task_id, str):
+        raise ValidationError(f"task_id must be a string, got {type(task_id).__name__}")
+    if not task_id or not task_id.strip():
+        raise ValidationError("task_id cannot be empty")
+    validated_id: str = task_id.strip()
+    if len(validated_id) > MAX_TASK_ID_LENGTH:
+        raise ValidationError(f"task_id too long (max {MAX_TASK_ID_LENGTH} chars)")
+    if not TASK_ID_PATTERN.match(validated_id):
+        raise ValidationError(
+            "task_id must contain only alphanumeric chars, hyphens, and underscores"
+        )
+    return validated_id
+
+
+def _validate_tokens_used(tokens_used: Any) -> int | None:
+    """Validate and return tokens_used."""
+    if tokens_used is None:
+        return None
+    validated_tokens: int
+    if not isinstance(tokens_used, int):
+        try:
+            validated_tokens = int(tokens_used)
+        except (ValueError, TypeError) as e:
+            raise ValidationError(f"tokens_used must be an integer: {e}") from e
+    else:
+        validated_tokens = tokens_used
+    if validated_tokens < 0:
+        raise ValidationError("tokens_used cannot be negative")
+    if validated_tokens > 10_000_000:
+        raise ValidationError("tokens_used value unreasonably large")
+    return validated_tokens
+
+
+def _validate_priority(priority: Any) -> int:
+    """Validate and return priority."""
+    validated_priority: int
+    if not isinstance(priority, int):
+        try:
+            validated_priority = int(priority)
+        except (ValueError, TypeError) as e:
+            raise ValidationError(f"priority must be an integer: {e}") from e
+    else:
+        validated_priority = priority
+    if validated_priority < 1:
+        raise ValidationError("priority must be at least 1")
+    if validated_priority > 1000:
+        raise ValidationError("priority too high (max 1000)")
+    return validated_priority
+
+
+def _validate_category(category: Any) -> str:
+    """Validate and return learning category."""
+    if not isinstance(category, str):
+        raise ValidationError(f"category must be a string, got {type(category).__name__}")
+    validated_category: str = category.lower().strip()
+    if validated_category not in VALID_CATEGORIES:
+        valid_list = ", ".join(sorted(VALID_CATEGORIES))
+        raise ValidationError(f"category must be one of: {valid_list}")
+    return validated_category
+
+# Global tools instance - will be set by create_ralph_mcp_server
+_ralph_tools: RalphTools | None = None
+
+
+def _format_result(result: ToolResult) -> dict[str, Any]:
+    """Format a ToolResult for MCP response."""
+    if result.success:
+        if result.data:
+            text = f"{result.content}\n\n{json.dumps(result.data, indent=2)}"
+        else:
+            text = result.content
+        return {"content": [{"type": "text", "text": text}]}
+    else:
+        error_text = f"Error: {result.content}"
+        if result.error:
+            error_text += f"\nDetails: {result.error}"
+        return {"content": [{"type": "text", "text": error_text}], "is_error": True}
+
+
+def _get_tools() -> RalphTools:
+    """Get the global RalphTools instance."""
+    if _ralph_tools is None:
+        raise RuntimeError("Ralph MCP tools not initialized. Call create_ralph_mcp_server first.")
+    return _ralph_tools
+
+
+@tool(
+    "ralph_get_next_task",
+    "Get the highest-priority incomplete task from the implementation plan",
+    {},
+)
+async def ralph_get_next_task(args: dict[str, Any]) -> dict[str, Any]:
+    """Get the next task to work on."""
+    tools = _get_tools()
+    result = tools.get_next_task()
+    return _format_result(result)
+
+
+@tool(
+    "ralph_mark_task_complete",
+    "Mark a task as completed with optional verification notes",
+    {
+        "task_id": str,
+        "verification_notes": str,
+        "tokens_used": int,
+    },
+)
+async def ralph_mark_task_complete(args: dict[str, Any]) -> dict[str, Any]:
+    """Mark a task as complete."""
+    try:
+        task_id = _validate_task_id(args.get("task_id"))
+        tokens_used = _validate_tokens_used(args.get("tokens_used"))
+    except ValidationError as e:
+        return {"content": [{"type": "text", "text": f"Validation error: {e}"}], "is_error": True}
+
+    tools = _get_tools()
+    result = tools.mark_task_complete(
+        task_id=task_id,
+        verification_notes=args.get("verification_notes"),
+        tokens_used=tokens_used,
+    )
+    return _format_result(result)
+
+
+@tool(
+    "ralph_mark_task_blocked",
+    "Mark a task as blocked with a reason",
+    {
+        "task_id": str,
+        "reason": str,
+    },
+)
+async def ralph_mark_task_blocked(args: dict[str, Any]) -> dict[str, Any]:
+    """Mark a task as blocked."""
+    try:
+        task_id = _validate_task_id(args.get("task_id"))
+        reason = args.get("reason", "")
+        if not reason or not str(reason).strip():
+            raise ValidationError("reason cannot be empty")
+    except ValidationError as e:
+        return {"content": [{"type": "text", "text": f"Validation error: {e}"}], "is_error": True}
+
+    tools = _get_tools()
+    result = tools.mark_task_blocked(
+        task_id=task_id,
+        reason=str(reason).strip(),
+    )
+    return _format_result(result)
+
+
+@tool(
+    "ralph_mark_task_in_progress",
+    "Mark a task as in progress",
+    {
+        "task_id": str,
+    },
+)
+async def ralph_mark_task_in_progress(args: dict[str, Any]) -> dict[str, Any]:
+    """Mark a task as in progress."""
+    try:
+        task_id = _validate_task_id(args.get("task_id"))
+    except ValidationError as e:
+        return {"content": [{"type": "text", "text": f"Validation error: {e}"}], "is_error": True}
+
+    tools = _get_tools()
+    result = tools.mark_task_in_progress(task_id=task_id)
+    return _format_result(result)
+
+
+@tool(
+    "ralph_append_learning",
+    "Record a learning for future iterations (patterns, antipatterns, debugging insights)",
+    {
+        "learning": str,
+        "category": str,
+    },
+)
+async def ralph_append_learning(args: dict[str, Any]) -> dict[str, Any]:
+    """Append a learning to progress.txt."""
+    try:
+        learning = args.get("learning", "")
+        if not learning or not str(learning).strip():
+            raise ValidationError("learning cannot be empty")
+        learning = str(learning).strip()
+        if len(learning) > MAX_LEARNING_LENGTH:
+            raise ValidationError(f"learning too long (max {MAX_LEARNING_LENGTH} chars)")
+        category = _validate_category(args.get("category", "pattern"))
+    except ValidationError as e:
+        return {"content": [{"type": "text", "text": f"Validation error: {e}"}], "is_error": True}
+
+    tools = _get_tools()
+    result = tools.append_learning(
+        learning=learning,
+        category=category,
+    )
+    return _format_result(result)
+
+
+@tool(
+    "ralph_get_plan_summary",
+    "Get a summary of the current implementation plan including task counts and next task",
+    {},
+)
+async def ralph_get_plan_summary(args: dict[str, Any]) -> dict[str, Any]:
+    """Get plan summary."""
+    tools = _get_tools()
+    result = tools.get_plan_summary()
+    return _format_result(result)
+
+
+@tool(
+    "ralph_get_state_summary",
+    "Get a summary of current Ralph state including phase, costs, and circuit breaker status",
+    {},
+)
+async def ralph_get_state_summary(args: dict[str, Any]) -> dict[str, Any]:
+    """Get state summary."""
+    tools = _get_tools()
+    result = tools.get_state_summary()
+    return _format_result(result)
+
+
+@tool(
+    "ralph_add_task",
+    "Add a new task to the implementation plan",
+    {
+        "task_id": str,
+        "description": str,
+        "priority": int,
+        "dependencies": list,
+        "verification_criteria": list,
+        "estimated_tokens": int,
+    },
+)
+async def ralph_add_task(args: dict[str, Any]) -> dict[str, Any]:
+    """Add a new task to the plan."""
+    try:
+        task_id = _validate_task_id(args.get("task_id"))
+        description = args.get("description", "")
+        if not description or not str(description).strip():
+            raise ValidationError("description cannot be empty")
+        description = str(description).strip()
+        if len(description) > MAX_DESCRIPTION_LENGTH:
+            raise ValidationError(f"description too long (max {MAX_DESCRIPTION_LENGTH} chars)")
+        priority = _validate_priority(args.get("priority"))
+        estimated_tokens = _validate_tokens_used(args.get("estimated_tokens", 30_000)) or 30_000
+    except ValidationError as e:
+        return {"content": [{"type": "text", "text": f"Validation error: {e}"}], "is_error": True}
+
+    tools = _get_tools()
+    result = tools.add_task(
+        task_id=task_id,
+        description=description,
+        priority=priority,
+        dependencies=args.get("dependencies"),
+        verification_criteria=args.get("verification_criteria"),
+        estimated_tokens=estimated_tokens,
+    )
+    return _format_result(result)
+
+
+@tool(
+    "ralph_increment_retry",
+    "Increment the retry count for a task and reset it to pending status",
+    {
+        "task_id": str,
+    },
+)
+async def ralph_increment_retry(args: dict[str, Any]) -> dict[str, Any]:
+    """Increment retry count for a task."""
+    try:
+        task_id = _validate_task_id(args.get("task_id"))
+    except ValidationError as e:
+        return {"content": [{"type": "text", "text": f"Validation error: {e}"}], "is_error": True}
+
+    tools = _get_tools()
+    result = tools.increment_retry(task_id=task_id)
+    return _format_result(result)
+
+
+# List of all Ralph tools
+RALPH_MCP_TOOLS = [
+    ralph_get_next_task,
+    ralph_mark_task_complete,
+    ralph_mark_task_blocked,
+    ralph_mark_task_in_progress,
+    ralph_append_learning,
+    ralph_get_plan_summary,
+    ralph_get_state_summary,
+    ralph_add_task,
+    ralph_increment_retry,
+]
+
+
+def create_ralph_mcp_server(project_root: Path) -> Any:
+    """Create an MCP server with all Ralph tools.
+
+    Args:
+        project_root: Path to the project root directory
+
+    Returns:
+        SDK MCP server instance
+    """
+    global _ralph_tools
+    _ralph_tools = RalphTools(project_root)
+
+    return create_sdk_mcp_server(
+        name="ralph",
+        version="0.1.0",
+        tools=RALPH_MCP_TOOLS,
+    )
+
+
+def get_ralph_tool_names(server_name: str = "ralph") -> list[str]:
+    """Get the allowed tool names for Ralph MCP tools.
+
+    Args:
+        server_name: The name used for the MCP server
+
+    Returns:
+        List of fully qualified tool names (mcp__{server}__{tool})
+    """
+    tool_base_names = [
+        "ralph_get_next_task",
+        "ralph_mark_task_complete",
+        "ralph_mark_task_blocked",
+        "ralph_mark_task_in_progress",
+        "ralph_append_learning",
+        "ralph_get_plan_summary",
+        "ralph_get_state_summary",
+        "ralph_add_task",
+        "ralph_increment_retry",
+    ]
+    return [f"mcp__{server_name}__{name}" for name in tool_base_names]
