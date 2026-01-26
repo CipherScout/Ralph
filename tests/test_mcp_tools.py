@@ -540,7 +540,8 @@ class TestRalphMcpToolsConstant:
 
     def test_has_expected_count(self) -> None:
         """Has expected number of tools."""
-        assert len(RALPH_MCP_TOOLS) == 9
+        # 9 original tools + 4 phase completion signal tools
+        assert len(RALPH_MCP_TOOLS) == 13
 
     def test_all_have_handler(self) -> None:
         """All tools have callable handler."""

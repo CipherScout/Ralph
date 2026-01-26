@@ -114,9 +114,9 @@ class TestPhaseTools:
         assert "Glob" in tools
         assert "WebSearch" in tools
         assert "AskUserQuestion" in tools
-        # Building-only tools not present
-        assert "Edit" not in tools
-        assert "BashOutput" not in tools
+        assert "Bash" in tools  # Now allowed for exploration
+        assert "Edit" in tools  # Now allowed for all phases
+        assert "TodoWrite" in tools  # Now allowed for tracking
 
     def test_planning_phase_tools(self) -> None:
         """Planning phase has correct tools."""
@@ -124,8 +124,9 @@ class TestPhaseTools:
         assert "Read" in tools
         assert "Write" in tools
         assert "ExitPlanMode" in tools
-        # Building-only tools not present
-        assert "Edit" not in tools
+        assert "Bash" in tools  # Now allowed for analysis
+        assert "Edit" in tools  # Now allowed for all phases
+        assert "TodoWrite" in tools  # Now allowed for tracking
 
     def test_building_phase_tools(self) -> None:
         """Building phase has full tool access."""
@@ -144,9 +145,9 @@ class TestPhaseTools:
         assert "Read" in tools
         assert "Bash" in tools
         assert "Task" in tools
-        # Write/Edit not in validation
-        assert "Write" not in tools
-        assert "Edit" not in tools
+        assert "Write" in tools  # Now allowed for validation report
+        assert "Edit" in tools  # Now allowed for all phases
+        assert "WebSearch" in tools  # Now allowed for all phases
 
 
 class TestCalculateMaxTurns:
@@ -212,8 +213,10 @@ class TestValidateToolUseForPhase:
     @pytest.mark.asyncio
     async def test_validate_tool_use_wrong_phase(self) -> None:
         """Tool not allowed in phase is blocked."""
-        # Edit not allowed in validation phase
-        result = await validate_tool_use_for_phase("Edit", {"file": "test.py"}, Phase.VALIDATION)
+        # AskUserQuestion only allowed in discovery phase, not building
+        result = await validate_tool_use_for_phase(
+            "AskUserQuestion", {"questions": []}, Phase.BUILDING
+        )
         assert not result.allowed
         assert "not allowed" in result.reason.lower()
 

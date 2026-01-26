@@ -443,13 +443,13 @@ class TestPhaseValidationHook:
             assert result == {}, f"Read should be allowed in {phase.value}"
 
     @pytest.mark.asyncio
-    async def test_blocks_edit_in_validation(self) -> None:
-        """Edit tool is blocked in validation phase."""
+    async def test_blocks_ask_user_in_validation(self) -> None:
+        """AskUserQuestion tool is blocked in validation phase."""
         state = create_mock_state(phase=Phase.VALIDATION)
         hook = create_phase_validation_hook(state)
         hook_fn = hook.hooks[0]
         result = await hook_fn(
-            create_pre_tool_use_input("Edit", {"file": "test.py"}),
+            create_pre_tool_use_input("AskUserQuestion", {"questions": []}),
             "test-id",
             create_hook_context(),
         )
@@ -469,8 +469,8 @@ class TestPhaseValidationHook:
         assert result == {}
 
     @pytest.mark.asyncio
-    async def test_blocks_edit_in_discovery(self) -> None:
-        """Edit tool is blocked in discovery phase."""
+    async def test_allows_edit_in_discovery(self) -> None:
+        """Edit tool is now allowed in discovery phase."""
         state = create_mock_state(phase=Phase.DISCOVERY)
         hook = create_phase_validation_hook(state)
         hook_fn = hook.hooks[0]
@@ -479,7 +479,8 @@ class TestPhaseValidationHook:
             "test-id",
             create_hook_context(),
         )
-        assert as_dict(result)["hookSpecificOutput"]["permissionDecision"] == "deny"
+        # Edit is now allowed in all phases
+        assert result == {}
 
     @pytest.mark.asyncio
     async def test_allows_mcp_tools(self) -> None:

@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 
 class Phase(str, Enum):
@@ -311,6 +312,21 @@ class RalphState:
 
     # Control flags
     paused: bool = False
+
+    # Phase completion signals (set by ralph_signal_*_complete tools)
+    # Dict mapping phase name to completion info
+    completion_signals: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    def is_phase_complete(self, phase: str) -> bool:
+        """Check if a phase has been signaled as complete."""
+        return phase in self.completion_signals and self.completion_signals[phase].get(
+            "complete", False
+        )
+
+    def clear_phase_completion(self, phase: str) -> None:
+        """Clear the completion signal for a phase."""
+        if phase in self.completion_signals:
+            del self.completion_signals[phase]
 
     def start_iteration(self) -> None:
         """Mark start of a new iteration."""

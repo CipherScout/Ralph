@@ -234,9 +234,9 @@ class TestPhaseTools:
         assert "Glob" in tools
         assert "WebSearch" in tools
         assert "AskUserQuestion" in tools
-        # Building-only tools not present
-        assert "Edit" not in tools
-        assert "BashOutput" not in tools
+        assert "Bash" in tools  # Now allowed for exploration
+        assert "Edit" in tools  # Now allowed for all phases
+        assert "TodoWrite" in tools  # Now allowed for tracking
 
     def test_planning_phase_tools(self) -> None:
         """Planning phase has correct tools."""
@@ -244,8 +244,9 @@ class TestPhaseTools:
         assert "Read" in tools
         assert "Write" in tools
         assert "ExitPlanMode" in tools
-        # Building-only tools not present
-        assert "Edit" not in tools
+        assert "Bash" in tools  # Now allowed for analysis
+        assert "Edit" in tools  # Now allowed for all phases
+        assert "TodoWrite" in tools  # Now allowed for tracking
 
     def test_building_phase_tools(self) -> None:
         """Building phase has full tool access."""
@@ -264,9 +265,9 @@ class TestPhaseTools:
         assert "Read" in tools
         assert "Bash" in tools
         assert "Task" in tools
-        # Write/Edit not in validation
-        assert "Write" not in tools
-        assert "Edit" not in tools
+        assert "Write" in tools  # Now allowed for validation report
+        assert "Edit" in tools  # Now allowed for all phases
+        assert "WebSearch" in tools  # Now allowed for all phases
 
     def test_all_phases_have_read(self) -> None:
         """All phases have Read tool."""
@@ -444,7 +445,8 @@ class TestRalphSDKClient:
         options = client._build_options(phase=Phase.VALIDATION)
 
         # Should have validation tools, not building tools
-        assert "Edit" not in options.allowed_tools
+        # AskUserQuestion is only in discovery, not validation
+        assert "AskUserQuestion" not in options.allowed_tools
         assert "Read" in options.allowed_tools
 
     @patch("ralph.sdk_client._get_ralph_hooks")

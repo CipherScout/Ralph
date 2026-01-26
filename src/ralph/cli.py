@@ -13,6 +13,13 @@ from rich.prompt import Prompt
 from rich.table import Table
 
 from ralph import __version__
+from ralph.animations import (
+    PatienceDisplay,
+    PhaseAnimation,
+    get_random_fact,
+    get_random_phrase,
+    get_tool_category,
+)
 from ralph.config import load_config
 from ralph.context import (
     add_injection,
@@ -76,6 +83,9 @@ class RalphLiveDisplay:
         self._iteration_count = 0
         self._total_cost = 0.0
         self._total_tokens = 0
+        self._patience_display = PatienceDisplay(console)
+        self._phase_animation = PhaseAnimation(console)
+        self._show_fun_fact_at = 5  # Show a fun fact every N iterations
 
     def handle_event(self, event: StreamEvent) -> str | None:
         """Handle a stream event and return user input if needed.
@@ -94,10 +104,15 @@ class RalphLiveDisplay:
             self._iteration_count = event.iteration or 0
             if self.verbosity >= 1:
                 phase = event.phase or "unknown"
+                phrase = get_random_phrase(phase.lower() if phase in ["discovery", "planning", "building", "validation"] else "thinking")
                 self.console.print(
                     f"\n[bold blue]Iteration {self._iteration_count}[/bold blue] "
-                    f"[dim]({phase})[/dim]"
+                    f"[dim]({phase})[/dim] [cyan]{phrase}[/cyan]"
                 )
+                # Show a fun fact every N iterations
+                if self._iteration_count > 0 and self._iteration_count % self._show_fun_fact_at == 0:
+                    fact = get_random_fact()
+                    self.console.print(f"  [dim italic]Did you know? {fact}[/dim italic]")
 
         elif event.type == StreamEventType.ITERATION_END:
             tokens = event.data.get("tokens_used", 0)
@@ -125,10 +140,13 @@ class RalphLiveDisplay:
             if self.verbosity >= 1:
                 # Summarize tool input for display
                 summary = self._summarize_tool_input(tool_name, event.tool_input)
+                # Get a patience phrase based on the tool category
+                category = get_tool_category(tool_name)
+                phrase = get_random_phrase(category)
                 if summary:
-                    self.console.print(f"[dim]  -> {tool_name}: {summary}[/dim]")
+                    self.console.print(f"[dim]  -> {tool_name}: {summary}[/dim] [cyan dim]{phrase}[/cyan dim]")
                 else:
-                    self.console.print(f"[dim]  -> {tool_name}[/dim]")
+                    self.console.print(f"[dim]  -> {tool_name}[/dim] [cyan dim]{phrase}[/cyan dim]")
 
         elif event.type == StreamEventType.TOOL_USE_END:
             if self.tool_stack:
@@ -183,6 +201,9 @@ class RalphLiveDisplay:
             self.console.print(
                 f"\n[bold blue]Phase transition: {old_phase} -> {new_phase}[/bold blue]"
             )
+            # Show phase animation banner
+            if self.verbosity >= 1:
+                self._phase_animation.show_phase_banner(str(new_phase))
 
         elif event.type == StreamEventType.HANDOFF_START:
             reason = event.data.get("reason", "context budget")

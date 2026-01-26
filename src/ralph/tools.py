@@ -531,6 +531,67 @@ class RalphTools:
             )
 
 
+def signal_phase_complete(
+        self,
+        phase: str,
+        summary: str,
+        artifacts: dict[str, Any] | None = None,
+    ) -> ToolResult:
+        """Signal that a phase is complete.
+
+        This sets a flag in the state that executors can check to know
+        when to transition phases. This is more reliable than text matching.
+
+        Args:
+            phase: The phase that is complete (discovery, planning, building)
+            summary: Summary of what was accomplished
+            artifacts: Optional artifacts produced (specs, tasks, etc.)
+
+        Returns:
+            ToolResult indicating success
+        """
+        valid_phases = {"discovery", "planning", "building", "validation"}
+        if phase not in valid_phases:
+            return ToolResult(
+                success=False,
+                content=f"Invalid phase: {phase}",
+                error=f"Phase must be one of: {', '.join(valid_phases)}",
+            )
+
+        try:
+            state = self._load_state()
+
+            # Store phase completion signal in state
+            # We'll add a completion_signals dict to track these
+            if not hasattr(state, "completion_signals"):
+                state.completion_signals = {}
+
+            state.completion_signals[phase] = {
+                "complete": True,
+                "summary": summary,
+                "artifacts": artifacts or {},
+                "timestamp": datetime.now().isoformat(),
+            }
+
+            self._save_state(state)
+
+            return ToolResult(
+                success=True,
+                content=f"Phase '{phase}' marked complete: {summary}",
+                data={
+                    "phase": phase,
+                    "summary": summary,
+                    "artifacts": artifacts or {},
+                },
+            )
+        except Exception as e:
+            return ToolResult(
+                success=False,
+                content=f"Failed to signal phase complete: {phase}",
+                error=str(e),
+            )
+
+
 def create_tools(project_root: Path) -> RalphTools:
     """Create a RalphTools instance for the given project.
 

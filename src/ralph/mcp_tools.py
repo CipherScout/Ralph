@@ -311,6 +311,97 @@ async def ralph_increment_retry(args: dict[str, Any]) -> dict[str, Any]:
     return _format_result(result)
 
 
+@tool(
+    "ralph_signal_discovery_complete",
+    "Signal that the discovery phase is complete. Call this when all requirements have been gathered and specs created.",
+    {
+        "summary": str,
+        "specs_created": list,
+    },
+)
+async def ralph_signal_discovery_complete(args: dict[str, Any]) -> dict[str, Any]:
+    """Signal that discovery phase is complete."""
+    tools = _get_tools()
+    summary = args.get("summary", "Discovery complete")
+    specs = args.get("specs_created", [])
+
+    # Update state to signal completion
+    result = tools.signal_phase_complete(
+        phase="discovery",
+        summary=str(summary),
+        artifacts={"specs_created": specs},
+    )
+    return _format_result(result)
+
+
+@tool(
+    "ralph_signal_planning_complete",
+    "Signal that the planning phase is complete. Call this when implementation plan is ready with all tasks.",
+    {
+        "summary": str,
+        "task_count": int,
+    },
+)
+async def ralph_signal_planning_complete(args: dict[str, Any]) -> dict[str, Any]:
+    """Signal that planning phase is complete."""
+    tools = _get_tools()
+    summary = args.get("summary", "Planning complete")
+    task_count = args.get("task_count", 0)
+
+    result = tools.signal_phase_complete(
+        phase="planning",
+        summary=str(summary),
+        artifacts={"task_count": task_count},
+    )
+    return _format_result(result)
+
+
+@tool(
+    "ralph_signal_building_complete",
+    "Signal that the building phase is complete. Call this when all implementation tasks are done.",
+    {
+        "summary": str,
+        "tasks_completed": int,
+    },
+)
+async def ralph_signal_building_complete(args: dict[str, Any]) -> dict[str, Any]:
+    """Signal that building phase is complete."""
+    tools = _get_tools()
+    summary = args.get("summary", "Building complete")
+    tasks_completed = args.get("tasks_completed", 0)
+
+    result = tools.signal_phase_complete(
+        phase="building",
+        summary=str(summary),
+        artifacts={"tasks_completed": tasks_completed},
+    )
+    return _format_result(result)
+
+
+@tool(
+    "ralph_signal_validation_complete",
+    "Signal that the validation phase is complete. Call this when all verification is done.",
+    {
+        "summary": str,
+        "passed": bool,
+        "issues": list,
+    },
+)
+async def ralph_signal_validation_complete(args: dict[str, Any]) -> dict[str, Any]:
+    """Signal that validation phase is complete."""
+    tools = _get_tools()
+    summary = args.get("summary", "Validation complete")
+    passed = args.get("passed", True)
+    issues = args.get("issues", [])
+
+    result = tools.signal_phase_complete(
+        phase="validation",
+        summary=str(summary),
+        artifacts={"passed": passed, "issues": issues},
+    )
+    return _format_result(result)
+
+
 # List of all Ralph tools
 RALPH_MCP_TOOLS = [
     ralph_get_next_task,
@@ -322,6 +413,10 @@ RALPH_MCP_TOOLS = [
     ralph_get_state_summary,
     ralph_add_task,
     ralph_increment_retry,
+    ralph_signal_discovery_complete,
+    ralph_signal_planning_complete,
+    ralph_signal_building_complete,
+    ralph_signal_validation_complete,
 ]
 
 
@@ -363,5 +458,9 @@ def get_ralph_tool_names(server_name: str = "ralph") -> list[str]:
         "ralph_get_state_summary",
         "ralph_add_task",
         "ralph_increment_retry",
+        "ralph_signal_discovery_complete",
+        "ralph_signal_planning_complete",
+        "ralph_signal_building_complete",
+        "ralph_signal_validation_complete",
     ]
     return [f"mcp__{server_name}__{name}" for name in tool_base_names]

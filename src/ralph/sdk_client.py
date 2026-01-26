@@ -205,6 +205,8 @@ def calculate_cost(input_tokens: int, output_tokens: int, model: str) -> float:
 
 
 # Tool allocation by phase
+# All phases have access to a broad set of tools to allow flexibility
+# The agent needs Bash in all phases to run commands, verify things, etc.
 PHASE_TOOLS: dict[Phase, list[str]] = {
     Phase.DISCOVERY: [
         "Read",
@@ -213,8 +215,11 @@ PHASE_TOOLS: dict[Phase, list[str]] = {
         "WebSearch",
         "WebFetch",
         "Write",
+        "Edit",
         "Task",
         "AskUserQuestion",
+        "Bash",  # Allow running commands for exploration
+        "TodoWrite",
     ],
     Phase.PLANNING: [
         "Read",
@@ -223,8 +228,11 @@ PHASE_TOOLS: dict[Phase, list[str]] = {
         "WebSearch",
         "WebFetch",
         "Write",
+        "Edit",
         "Task",
         "ExitPlanMode",
+        "Bash",  # Allow running commands for analysis
+        "TodoWrite",
     ],
     Phase.BUILDING: [
         "Read",
@@ -247,7 +255,10 @@ PHASE_TOOLS: dict[Phase, list[str]] = {
         "Grep",
         "Bash",
         "Task",
+        "WebSearch",
         "WebFetch",
+        "Write",  # For creating validation reports
+        "Edit",
     ],
 }
 
@@ -361,7 +372,8 @@ class RalphSDKClient:
             model=get_model_for_phase(current_phase, self.config),
             hooks=self.hooks,  # type: ignore[arg-type]
             mcp_servers=self.mcp_servers,
-            setting_sources=["project"],  # Load CLAUDE.md
+            # Include user settings to inherit user's configured MCP servers
+            setting_sources=["user", "project", "local"],
             resume=self._session_id,  # Resume previous session if available
             can_use_tool=_default_can_use_tool,  # Handle AskUserQuestion
         )

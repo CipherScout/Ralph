@@ -261,6 +261,51 @@ class DiscoveryExecutor(PhaseExecutor):
     def phase(self) -> Phase:
         return Phase.DISCOVERY
 
+    def _build_continuation_prompt(self, iteration: int) -> str:
+        """Build a context-aware continuation prompt for iteration > 0.
+
+        This is critical for maintaining context across iterations.
+        The agent needs to know what was done in previous iterations.
+        """
+        # Get list of specs already created
+        specs_dir = self.project_root / "specs"
+        existing_specs: list[str] = []
+        if specs_dir.exists():
+            existing_specs = [f.name for f in specs_dir.glob("*.md")]
+
+        # Read MEMORY.md if it exists for context
+        memory_content = ""
+        memory_path = self.project_root / "MEMORY.md"
+        if memory_path.exists():
+            try:
+                memory_content = memory_path.read_text()[:2000]  # First 2000 chars
+            except Exception:
+                pass
+
+        prompt = f"""## Discovery Phase - Iteration {iteration + 1}
+
+You are continuing the DISCOVERY phase. Here is the context from previous iterations:
+
+### Already Created Specs
+{chr(10).join(f'- {s}' for s in existing_specs) if existing_specs else '(none yet)'}
+
+### Session Memory
+{memory_content if memory_content else '(no memory file yet)'}
+
+### Your Task for This Iteration
+
+1. **First**: Read MEMORY.md if you haven't already, to understand what was discussed
+2. **Check specs/**: Review what requirement documents already exist
+3. **Continue**: Ask follow-up questions OR create remaining spec documents
+4. **Signal Completion**: When all requirements are captured, call ralph_signal_discovery_complete
+
+**IMPORTANT**:
+- Do NOT re-ask questions that were already answered
+- Do NOT re-create specs that already exist
+- If specs cover the requirements, signal completion using ralph_signal_discovery_complete tool
+"""
+        return prompt
+
     async def execute(
         self,
         initial_goal: str | None = None,
@@ -310,8 +355,10 @@ Start by asking the user what they want to build."""
 
             # Run discovery iterations
             for i in range(max_iterations):
+                # Use context-aware continuation prompt after first iteration
+                current_prompt = prompt if i == 0 else self._build_continuation_prompt(i)
                 result = await self.run_iteration(
-                    prompt=prompt if i == 0 else "Continue discovery process.",
+                    prompt=current_prompt,
                     system_prompt=self.get_system_prompt(),
                 )
 
@@ -329,13 +376,22 @@ Start by asking the user what they want to build."""
                         error=result.error,
                     )
 
-                # Check for phase completion signal in output
-                if "discovery complete" in result.final_text.lower():
+                # Check for phase completion signal (from tool OR text)
+                # Reload state to check for completion signal
+                self._state = None  # Force reload
+                if (
+                    self.state.is_phase_complete("discovery")
+                    or "discovery complete" in result.final_text.lower()
+                ):
                     break
 
                 # Check for handoff need
                 if result.needs_handoff:
                     break
+
+            # Clear the completion signal for next run
+            self.state.clear_phase_completion("discovery")
+            self.save_state()
 
             # List created specs
             specs_dir = self.project_root / "specs"
@@ -434,7 +490,8 @@ Start by asking the user what they want to build."""
 
             # Run discovery iterations with streaming
             for i in range(max_iterations):
-                current_prompt = prompt if i == 0 else "Continue discovery process."
+                # Use context-aware continuation prompt after first iteration
+                current_prompt = prompt if i == 0 else self._build_continuation_prompt(i)
 
                 # Stream events from iteration
                 gen = self.stream_iteration(
@@ -463,10 +520,19 @@ Start by asking the user what they want to build."""
                     except StopAsyncIteration:
                         break
 
-                # Check for phase completion signal in output
-                if "discovery complete" in last_final_text.lower():
+                # Check for phase completion signal (from tool OR text)
+                # Reload state to check for completion signal
+                self._state = None  # Force reload
+                if (
+                    self.state.is_phase_complete("discovery")
+                    or "discovery complete" in last_final_text.lower()
+                ):
                     yield info_event("Discovery phase completion signal detected")
                     break
+
+            # Clear the completion signal for next run
+            self.state.clear_phase_completion("discovery")
+            self.save_state()
 
             # List created specs
             specs_dir = self.project_root / "specs"
@@ -502,6 +568,44 @@ class PlanningExecutor(PhaseExecutor):
     @property
     def phase(self) -> Phase:
         return Phase.PLANNING
+
+    def _build_continuation_prompt(self, iteration: int) -> str:
+        """Build a context-aware continuation prompt for iteration > 0."""
+        # Get current plan state
+        self._plan = None  # Force reload
+        plan = self.plan
+        task_count = len(plan.tasks)
+
+        # Get list of specs to reference
+        specs_dir = self.project_root / "specs"
+        existing_specs: list[str] = []
+        if specs_dir.exists():
+            existing_specs = [f.name for f in specs_dir.glob("*.md")]
+
+        prompt = f"""## Planning Phase - Iteration {iteration + 1}
+
+You are continuing the PLANNING phase. Here is the context:
+
+### Specs to Implement
+{chr(10).join(f'- {s}' for s in existing_specs) if existing_specs else '(no specs found)'}
+
+### Tasks Already Created: {task_count}
+{chr(10).join(f'- [{t.status}] {t.description[:80]}...' for t in plan.tasks[:10]) if plan.tasks else '(none yet)'}
+
+### Your Task for This Iteration
+
+1. **Review**: Check what tasks are already in the plan
+2. **Gap Analysis**: Identify any missing tasks based on specs
+3. **Create Tasks**: Use ralph_add_task for any remaining work
+4. **Signal Completion**: When plan is complete, call ralph_signal_planning_complete
+
+**IMPORTANT**:
+- Do NOT create duplicate tasks
+- Tasks should be sized for ~30 minutes of work each
+- Set dependencies between related tasks
+- If plan covers all requirements, signal completion
+"""
+        return prompt
 
     async def execute(
         self,
@@ -546,8 +650,10 @@ Start by reading the specs and analyzing the codebase."""
 
             # Run planning iterations
             for i in range(max_iterations):
+                # Use context-aware continuation prompt after first iteration
+                current_prompt = prompt if i == 0 else self._build_continuation_prompt(i)
                 result = await self.run_iteration(
-                    prompt=prompt if i == 0 else "Continue planning. Create more tasks if needed.",
+                    prompt=current_prompt,
                     system_prompt=self.get_system_prompt(),
                 )
 
@@ -565,8 +671,12 @@ Start by reading the specs and analyzing the codebase."""
                         error=result.error,
                     )
 
-                # Check for phase completion signal
-                if "planning complete" in result.final_text.lower():
+                # Check for phase completion signal (from tool OR text)
+                self._state = None  # Force reload
+                if (
+                    self.state.is_phase_complete("planning")
+                    or "planning complete" in result.final_text.lower()
+                ):
                     break
 
                 # Check for handoff need
@@ -655,8 +765,8 @@ Start by reading the specs and analyzing the codebase."""
 
             # Run planning iterations with streaming
             for i in range(max_iterations):
-                continue_prompt = "Continue planning. Create more tasks if needed."
-                current_prompt = prompt if i == 0 else continue_prompt
+                # Use context-aware continuation prompt after first iteration
+                current_prompt = prompt if i == 0 else self._build_continuation_prompt(i)
 
                 # Stream events from iteration
                 gen = self.stream_iteration(
@@ -685,8 +795,12 @@ Start by reading the specs and analyzing the codebase."""
                     except StopAsyncIteration:
                         break
 
-                # Check for phase completion signal in output
-                if "planning complete" in last_final_text.lower():
+                # Check for phase completion signal (from tool OR text)
+                self._state = None  # Force reload
+                if (
+                    self.state.is_phase_complete("planning")
+                    or "planning complete" in last_final_text.lower()
+                ):
                     yield info_event("Planning phase completion signal detected")
                     break
 
