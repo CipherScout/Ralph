@@ -732,3 +732,224 @@ class TestRunCommand:
         result = runner.invoke(app, ["run", "-p", str(tmp_path)])
         assert result.exit_code == 0
         assert "loop status" in result.stdout.lower()
+
+
+class TestRalphLiveDisplaySpinner:
+    """Tests for RalphLiveDisplay spinner event handling.
+
+    These tests verify that the spinner is correctly started/stopped
+    based on different stream events without using the real Claude Agent SDK.
+    """
+
+    def test_text_delta_stops_spinner_only_when_printing(self) -> None:
+        """TEXT_DELTA should only stop spinner when verbosity >= 2 and text is present."""
+        from rich.console import Console
+        from ralph.cli import RalphLiveDisplay
+
+        # Create a quiet console for testing
+        console = Console(force_terminal=True, no_color=True, quiet=True)
+        display = RalphLiveDisplay(console, verbosity=2)  # verbose mode
+
+        # Track spinner calls
+        start_calls = []
+        stop_calls = []
+        display._start_spinner = lambda: start_calls.append(True)
+        display._stop_spinner = lambda: stop_calls.append(True)
+
+        # TEXT_DELTA with text in verbose mode should stop spinner
+        event = StreamEvent(
+            type=StreamEventType.TEXT_DELTA,
+            text="Hello world",
+        )
+        display.handle_event(event)
+        assert len(stop_calls) == 1, "Spinner should stop when printing text"
+
+    def test_text_delta_no_stop_when_low_verbosity(self) -> None:
+        """TEXT_DELTA should NOT stop spinner when verbosity < 2."""
+        from rich.console import Console
+        from ralph.cli import RalphLiveDisplay
+
+        console = Console(force_terminal=True, no_color=True, quiet=True)
+        display = RalphLiveDisplay(console, verbosity=1)  # normal mode, no text printing
+
+        stop_calls = []
+        display._stop_spinner = lambda: stop_calls.append(True)
+
+        # TEXT_DELTA in low verbosity mode should NOT stop spinner
+        event = StreamEvent(
+            type=StreamEventType.TEXT_DELTA,
+            text="Hello world",
+        )
+        display.handle_event(event)
+        assert len(stop_calls) == 0, "Spinner should NOT stop when not printing text"
+
+    def test_text_delta_no_stop_when_empty_text(self) -> None:
+        """TEXT_DELTA should NOT stop spinner when text is empty."""
+        from rich.console import Console
+        from ralph.cli import RalphLiveDisplay
+
+        console = Console(force_terminal=True, no_color=True, quiet=True)
+        display = RalphLiveDisplay(console, verbosity=2)
+
+        stop_calls = []
+        display._stop_spinner = lambda: stop_calls.append(True)
+
+        # TEXT_DELTA with empty text should NOT stop spinner
+        event = StreamEvent(
+            type=StreamEventType.TEXT_DELTA,
+            text="",
+        )
+        display.handle_event(event)
+        assert len(stop_calls) == 0, "Spinner should NOT stop when text is empty"
+
+    def test_tool_use_end_restarts_spinner(self) -> None:
+        """TOOL_USE_END should restart the spinner after tool completes."""
+        from rich.console import Console
+        from ralph.cli import RalphLiveDisplay
+
+        console = Console(force_terminal=True, no_color=True, quiet=True)
+        display = RalphLiveDisplay(console, verbosity=1)
+
+        # Pre-populate tool stack
+        display.tool_stack.append("Read")
+
+        start_calls = []
+        stop_calls = []
+        display._start_spinner = lambda: start_calls.append(True)
+        display._stop_spinner = lambda: stop_calls.append(True)
+
+        event = StreamEvent(
+            type=StreamEventType.TOOL_USE_END,
+            tool_name="Read",
+        )
+        display.handle_event(event)
+
+        assert len(stop_calls) == 1, "Spinner should stop on TOOL_USE_END"
+        assert len(start_calls) == 1, "Spinner should restart after TOOL_USE_END"
+
+    def test_tool_use_start_starts_spinner(self) -> None:
+        """TOOL_USE_START should start the spinner during tool execution."""
+        from rich.console import Console
+        from ralph.cli import RalphLiveDisplay
+
+        console = Console(force_terminal=True, no_color=True, quiet=True)
+        display = RalphLiveDisplay(console, verbosity=1)
+
+        start_calls = []
+        stop_calls = []
+        display._start_spinner = lambda: start_calls.append(True)
+        display._stop_spinner = lambda: stop_calls.append(True)
+
+        event = StreamEvent(
+            type=StreamEventType.TOOL_USE_START,
+            tool_name="Read",
+            tool_input={"file_path": "/test.py"},
+        )
+        display.handle_event(event)
+
+        assert len(stop_calls) == 1, "Spinner should stop to show tool info"
+        assert len(start_calls) == 1, "Spinner should start during tool execution"
+
+    def test_needs_input_restarts_spinner_after_response(self) -> None:
+        """NEEDS_INPUT should restart spinner after getting user response."""
+        from rich.console import Console
+        from ralph.cli import RalphLiveDisplay
+
+        console = Console(force_terminal=True, no_color=True, quiet=True)
+        display = RalphLiveDisplay(console, verbosity=1)
+
+        start_calls = []
+        stop_calls = []
+        display._start_spinner = lambda: start_calls.append(True)
+        display._stop_spinner = lambda: stop_calls.append(True)
+
+        event = StreamEvent(
+            type=StreamEventType.NEEDS_INPUT,
+            question="What is your name?",
+            options=[],
+        )
+
+        # Mock Prompt.ask to return a test response
+        with patch("ralph.cli.Prompt.ask", return_value="Test User"):
+            response = display.handle_event(event)
+
+        assert response == "Test User"
+        assert len(stop_calls) == 1, "Spinner should stop for user input"
+        assert len(start_calls) == 1, "Spinner should restart after getting input"
+
+    def test_iteration_start_starts_spinner(self) -> None:
+        """ITERATION_START should start the spinner."""
+        from rich.console import Console
+        from ralph.cli import RalphLiveDisplay
+
+        console = Console(force_terminal=True, no_color=True, quiet=True)
+        display = RalphLiveDisplay(console, verbosity=1)
+
+        start_calls = []
+        display._start_spinner = lambda: start_calls.append(True)
+
+        event = StreamEvent(
+            type=StreamEventType.ITERATION_START,
+            iteration=1,
+            phase="discovery",
+        )
+        display.handle_event(event)
+
+        assert len(start_calls) == 1, "Spinner should start on ITERATION_START"
+
+    def test_iteration_end_stops_spinner(self) -> None:
+        """ITERATION_END should stop the spinner."""
+        from rich.console import Console
+        from ralph.cli import RalphLiveDisplay
+
+        console = Console(force_terminal=True, no_color=True, quiet=True)
+        display = RalphLiveDisplay(console, verbosity=1)
+
+        stop_calls = []
+        display._stop_spinner = lambda: stop_calls.append(True)
+
+        event = StreamEvent(
+            type=StreamEventType.ITERATION_END,
+            iteration=1,
+            data={"success": True, "tokens": 100, "cost": 0.01},
+        )
+        display.handle_event(event)
+
+        assert len(stop_calls) == 1, "Spinner should stop on ITERATION_END"
+
+    def test_spinner_lifecycle_through_tool_call(self) -> None:
+        """Test complete spinner lifecycle: iteration -> text -> tool -> text -> end."""
+        from rich.console import Console
+        from ralph.cli import RalphLiveDisplay
+
+        console = Console(force_terminal=True, no_color=True, quiet=True)
+        display = RalphLiveDisplay(console, verbosity=2)
+
+        start_calls = []
+        stop_calls = []
+        display._start_spinner = lambda: start_calls.append(True)
+        display._stop_spinner = lambda: stop_calls.append(True)
+
+        # Simulate: ITERATION_START -> TEXT_DELTA -> TOOL_USE_START -> TOOL_USE_END -> TEXT_DELTA
+        events = [
+            StreamEvent(type=StreamEventType.ITERATION_START, iteration=1, phase="discovery"),
+            StreamEvent(type=StreamEventType.TEXT_DELTA, text="Let me read the file."),
+            StreamEvent(type=StreamEventType.TOOL_USE_START, tool_name="Read", tool_input={}),
+            StreamEvent(type=StreamEventType.TOOL_USE_END, tool_name="Read"),
+            StreamEvent(type=StreamEventType.TEXT_DELTA, text="The file contains..."),
+        ]
+
+        for event in events:
+            display.handle_event(event)
+
+        # Verify the sequence:
+        # 1. ITERATION_START: start
+        # 2. TEXT_DELTA: stop (printing text)
+        # 3. TOOL_USE_START: stop, start (show tool info, then spinner during tool)
+        # 4. TOOL_USE_END: stop, start (stop tool spinner, restart for continued processing)
+        # 5. TEXT_DELTA: stop (printing text)
+
+        # At least 3 starts (iteration, tool_use_start, tool_use_end)
+        assert len(start_calls) >= 3, f"Expected at least 3 starts, got {len(start_calls)}"
+        # At least 4 stops (text, tool_use_start, tool_use_end, text)
+        assert len(stop_calls) >= 4, f"Expected at least 4 stops, got {len(stop_calls)}"

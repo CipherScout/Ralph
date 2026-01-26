@@ -138,11 +138,10 @@ class RalphLiveDisplay:
                 )
 
         elif event.type == StreamEventType.TEXT_DELTA:
-            # Stop spinner when text starts streaming
-            self._stop_spinner()
             self.current_text += event.text or ""
-            # In verbose mode, stream text as it arrives
+            # Only stop spinner when actually printing text (verbose mode)
             if self.verbosity >= 2 and event.text:
+                self._stop_spinner()
                 self.console.print(event.text, end="")
 
         elif event.type == StreamEventType.TOOL_USE_START:
@@ -168,6 +167,8 @@ class RalphLiveDisplay:
             self._stop_spinner()
             if self.tool_stack:
                 self.tool_stack.pop()
+            # Restart spinner - LLM continues processing after tool completes
+            self._start_spinner()
 
         elif event.type == StreamEventType.NEEDS_INPUT:
             # Stop spinner to show question
@@ -199,6 +200,8 @@ class RalphLiveDisplay:
 
             # Get user response
             response = Prompt.ask("[bold]Your answer[/bold]")
+            # Restart spinner - LLM continues processing after user input
+            self._start_spinner()
             return response
 
         elif event.type == StreamEventType.TASK_COMPLETE:
