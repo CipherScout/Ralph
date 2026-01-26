@@ -25,13 +25,17 @@ from claude_agent_sdk import (
     ToolUseBlock,
     query,
 )
+from claude_agent_sdk.types import (
+    PermissionResultAllow,
+    PermissionResultDeny,
+    ToolPermissionContext,
+)
 
 from ralph.events import (
     StreamEvent,
     error_event,
     iteration_end_event,
     iteration_start_event,
-    needs_input_event,
     task_blocked_event,
     task_complete_event,
     text_delta_event,
@@ -63,6 +67,95 @@ def _get_ralph_hooks(state: RalphState, config: Any | None = None) -> dict[str, 
     if config is not None:
         max_cost = config.cost_limits.per_iteration
     return get_ralph_hooks(state, max_cost_per_iteration=max_cost)
+
+
+async def _handle_ask_user_question(
+    input_data: dict[str, Any],
+) -> PermissionResultAllow:
+    """Handle AskUserQuestion tool by displaying questions and collecting answers.
+
+    This follows the SDK's documented pattern for handling user input tools.
+    The answers are returned via updated_input so Claude receives them.
+    """
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.prompt import Prompt
+
+    console = Console()
+    answers: dict[str, str] = {}
+
+    questions = input_data.get("questions", [])
+    for q in questions:
+        header = q.get("header", "Question")
+        question_text = q.get("question", "Please answer:")
+        options = q.get("options", [])
+        multi_select = q.get("multiSelect", False)
+
+        # Display question with Rich formatting
+        console.print()
+        console.print(
+            Panel(
+                question_text,
+                title=f"[bold yellow]{header}[/bold yellow]",
+                border_style="yellow",
+            )
+        )
+
+        # Display options
+        for i, opt in enumerate(options, 1):
+            if isinstance(opt, dict):
+                label = opt.get("label", str(opt))
+                desc = opt.get("description", "")
+                if desc:
+                    console.print(f"  {i}. {label} [dim]- {desc}[/dim]")
+                else:
+                    console.print(f"  {i}. {label}")
+            else:
+                console.print(f"  {i}. {opt}")
+
+        # Show input hint
+        if multi_select:
+            console.print("  [dim](Enter numbers separated by commas, or type your own)[/dim]")
+        else:
+            console.print("  [dim](Enter a number, or type your own answer)[/dim]")
+
+        # Get user response
+        response = Prompt.ask("[bold]Your answer[/bold]")
+
+        # Parse response - convert number to option label if applicable
+        parsed_response = response.strip()
+        if parsed_response.isdigit():
+            idx = int(parsed_response) - 1
+            if 0 <= idx < len(options):
+                opt = options[idx]
+                parsed_response = opt.get("label", str(opt)) if isinstance(opt, dict) else str(opt)
+
+        answers[question_text] = parsed_response
+
+    # Return with answers in updated_input so Claude receives them
+    return PermissionResultAllow(
+        updated_input={
+            "questions": questions,
+            "answers": answers,
+        }
+    )
+
+
+async def _default_can_use_tool(
+    tool_name: str,
+    input_data: dict[str, Any],
+    context: ToolPermissionContext,
+) -> PermissionResultAllow | PermissionResultDeny:
+    """Default permission callback that handles AskUserQuestion specially.
+
+    For AskUserQuestion, this displays questions and collects user answers.
+    For other tools, it allows them (other restrictions are handled by hooks).
+    """
+    if tool_name == "AskUserQuestion":
+        return await _handle_ask_user_question(input_data)
+
+    # Allow other tools (hooks handle restrictions)
+    return PermissionResultAllow()
 
 
 @dataclass
@@ -270,6 +363,7 @@ class RalphSDKClient:
             mcp_servers=self.mcp_servers,
             setting_sources=["project"],  # Load CLAUDE.md
             resume=self._session_id,  # Resume previous session if available
+            can_use_tool=_default_can_use_tool,  # Handle AskUserQuestion
         )
 
     async def run_iteration(
@@ -483,39 +577,12 @@ class RalphSDKClient:
                                     tool_id=block.id,
                                 )
 
-                                # Handle AskUserQuestion specially - need user input
-                                if block.name == "AskUserQuestion":
-                                    # AskUserQuestion uses "questions" (plural) array
-                                    # Each has: question, header, options, multiSelect
-                                    questions_list = tool_input_dict.get("questions", [])
-                                    if questions_list:
-                                        first_q = questions_list[0]
-                                        question = first_q.get("question", "")
-                                        options_list = first_q.get("options", [])
-                                    else:
-                                        question = ""
-                                        options_list = []
-
-                                    # Yield NEEDS_INPUT and receive user response via send()
-                                    user_response: str | None = yield needs_input_event(
-                                        question=question,
-                                        options=options_list,
-                                        tool_id=block.id,
-                                    )
-
-                                    # The SDK handles providing the response back
-                                    # to Claude automatically via the tool result
-                                    if user_response:
-                                        # Yield tool end with the user's response
-                                        yield tool_end_event(
-                                            tool_name=block.name,
-                                            tool_result=user_response,
-                                            tool_id=block.id,
-                                            success=True,
-                                        )
+                                # Note: AskUserQuestion is handled by can_use_tool callback
+                                # which displays questions and collects answers BEFORE
+                                # the tool executes. We just observe the tool call here.
 
                                 # Check for Ralph task management tools
-                                elif "ralph_mark_task_complete" in block.name:
+                                if "ralph_mark_task_complete" in block.name:
                                     task_completed = True
                                     task_id = tool_input_dict.get("task_id")
                                     completion_notes = tool_input_dict.get(
