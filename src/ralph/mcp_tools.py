@@ -91,6 +91,62 @@ def _validate_category(category: Any) -> str:
         raise ValidationError(f"category must be one of: {valid_list}")
     return validated_category
 
+
+def _validate_dependencies(dependencies: Any) -> list[str] | None:
+    """Validate and normalize dependencies to a list of task IDs."""
+    if dependencies is None:
+        return None
+
+    # Handle comma-separated string
+    if isinstance(dependencies, str):
+        if not dependencies.strip():
+            return None
+        # Split by comma and validate each
+        dep_list = [d.strip() for d in dependencies.split(",") if d.strip()]
+        if not dep_list:
+            return None
+        dependencies = dep_list
+
+    if not isinstance(dependencies, list):
+        raise ValidationError(
+            f"dependencies must be a list or comma-separated string, "
+            f"got {type(dependencies).__name__}"
+        )
+
+    validated: list[str] = []
+    for dep in dependencies:
+        validated.append(_validate_task_id(dep))
+
+    return validated if validated else None
+
+
+def _validate_verification_criteria(criteria: Any) -> list[str] | None:
+    """Validate and normalize verification criteria to a list of strings."""
+    if criteria is None:
+        return None
+
+    if isinstance(criteria, str):
+        if not criteria.strip():
+            return None
+        return [criteria.strip()]
+
+    if not isinstance(criteria, list):
+        raise ValidationError(
+            f"verification_criteria must be a list or string, got {type(criteria).__name__}"
+        )
+
+    validated: list[str] = []
+    for item in criteria:
+        if not isinstance(item, str):
+            raise ValidationError(
+                f"Each verification criterion must be a string, got {type(item).__name__}"
+            )
+        if item.strip():
+            validated.append(item.strip())
+
+    return validated if validated else None
+
+
 # Global tools instance - will be set by create_ralph_mcp_server
 _ralph_tools: RalphTools | None = None
 
@@ -277,6 +333,8 @@ async def ralph_add_task(args: dict[str, Any]) -> dict[str, Any]:
             raise ValidationError(f"description too long (max {MAX_DESCRIPTION_LENGTH} chars)")
         priority = _validate_priority(args.get("priority"))
         estimated_tokens = _validate_tokens_used(args.get("estimated_tokens", 30_000)) or 30_000
+        dependencies = _validate_dependencies(args.get("dependencies"))
+        verification_criteria = _validate_verification_criteria(args.get("verification_criteria"))
     except ValidationError as e:
         return {"content": [{"type": "text", "text": f"Validation error: {e}"}], "is_error": True}
 
@@ -285,8 +343,8 @@ async def ralph_add_task(args: dict[str, Any]) -> dict[str, Any]:
         task_id=task_id,
         description=description,
         priority=priority,
-        dependencies=args.get("dependencies"),
-        verification_criteria=args.get("verification_criteria"),
+        dependencies=dependencies,
+        verification_criteria=verification_criteria,
         estimated_tokens=estimated_tokens,
     )
     return _format_result(result)

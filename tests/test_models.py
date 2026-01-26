@@ -281,6 +281,41 @@ class TestCircuitBreakerState:
         assert cb.state == "closed"
 
 
+class TestCircuitBreakerProgressMade:
+    """Tests for progress_made parameter in circuit breaker."""
+
+    def test_progress_made_resets_stagnation(self) -> None:
+        """progress_made=True resets stagnation count."""
+        cb = CircuitBreakerState()
+        cb.stagnation_count = 3
+        cb.record_success(tasks_completed=0, progress_made=True)
+        assert cb.stagnation_count == 0
+
+    def test_no_progress_increments_stagnation(self) -> None:
+        """No progress increments stagnation count."""
+        cb = CircuitBreakerState()
+        cb.record_success(tasks_completed=0, progress_made=False)
+        assert cb.stagnation_count == 1
+
+    def test_tasks_completed_takes_precedence(self) -> None:
+        """tasks_completed > 0 resets stagnation regardless of progress_made."""
+        cb = CircuitBreakerState()
+        cb.stagnation_count = 3
+        cb.record_success(tasks_completed=1, progress_made=False)
+        assert cb.stagnation_count == 0
+
+    def test_progress_made_without_tasks_resets_stagnation(self) -> None:
+        """progress_made resets stagnation even without completing tasks."""
+        cb = CircuitBreakerState()
+        # Simulate 4 iterations without progress
+        for _ in range(4):
+            cb.record_success(tasks_completed=0, progress_made=False)
+        assert cb.stagnation_count == 4
+        # Now make progress (e.g., tasks created in planning phase)
+        cb.record_success(tasks_completed=0, progress_made=True)
+        assert cb.stagnation_count == 0
+
+
 class TestContextBudget:
     """Tests for ContextBudget model."""
 
@@ -382,6 +417,104 @@ class TestRalphState:
             state.circuit_breaker.record_failure("Error")
         halt, reason = state.should_halt()
         assert halt is True
+
+
+class TestRalphStateEndIterationProgress:
+    """Tests for end_iteration with progress_made."""
+
+    def test_end_iteration_with_progress(self) -> None:
+        """end_iteration passes progress_made to circuit breaker."""
+        state = RalphState(project_root=Path("/test"))
+        state.end_iteration(cost_usd=0.01, tokens_used=100, task_completed=False, progress_made=True)
+        assert state.circuit_breaker.stagnation_count == 0
+
+    def test_end_iteration_without_progress(self) -> None:
+        """end_iteration without progress increments stagnation."""
+        state = RalphState(project_root=Path("/test"))
+        state.end_iteration(cost_usd=0.01, tokens_used=100, task_completed=False, progress_made=False)
+        assert state.circuit_breaker.stagnation_count == 1
+
+    def test_end_iteration_task_completed_resets_stagnation(self) -> None:
+        """end_iteration with task_completed=True resets stagnation."""
+        state = RalphState(project_root=Path("/test"))
+        # Create stagnation first
+        state.circuit_breaker.stagnation_count = 3
+        state.end_iteration(cost_usd=0.01, tokens_used=100, task_completed=True, progress_made=False)
+        assert state.circuit_breaker.stagnation_count == 0
+
+    def test_end_iteration_progress_prevents_halt(self) -> None:
+        """progress_made prevents stagnation halt."""
+        state = RalphState(project_root=Path("/test"))
+        state.circuit_breaker.max_stagnation_iterations = 3
+        # Do iterations with progress - should not halt
+        state.end_iteration(cost_usd=0.01, tokens_used=100, task_completed=False, progress_made=True)
+        state.end_iteration(cost_usd=0.01, tokens_used=100, task_completed=False, progress_made=True)
+        state.end_iteration(cost_usd=0.01, tokens_used=100, task_completed=False, progress_made=True)
+        halt, reason = state.should_halt()
+        assert halt is False
+
+
+class TestSessionIterationTracking:
+    """Tests for session iteration tracking."""
+
+    def test_start_iteration_increments_both(self) -> None:
+        """start_iteration increments both global and session counters."""
+        state = RalphState(project_root=Path("/test"))
+        assert state.iteration_count == 0
+        assert state.session_iteration_count == 0
+
+        state.start_iteration()
+        assert state.iteration_count == 1
+        assert state.session_iteration_count == 1
+
+        state.start_iteration()
+        assert state.iteration_count == 2
+        assert state.session_iteration_count == 2
+
+    def test_start_new_session_resets_session_counter(self) -> None:
+        """start_new_session resets session counter but preserves global."""
+        state = RalphState(project_root=Path("/test"))
+        state.start_iteration()
+        state.start_iteration()
+        assert state.iteration_count == 2
+        assert state.session_iteration_count == 2
+
+        state.start_new_session("session-2")
+        assert state.iteration_count == 2  # Global preserved
+        assert state.session_iteration_count == 0  # Session reset
+
+        state.start_iteration()
+        assert state.iteration_count == 3
+        assert state.session_iteration_count == 1
+
+    def test_session_iteration_count_initial_value(self) -> None:
+        """session_iteration_count starts at 0."""
+        state = RalphState(project_root=Path("/test"))
+        assert state.session_iteration_count == 0
+
+    def test_multiple_sessions_track_independently(self) -> None:
+        """Multiple session transitions maintain correct counts."""
+        state = RalphState(project_root=Path("/test"))
+
+        # First session: 3 iterations
+        state.start_iteration()
+        state.start_iteration()
+        state.start_iteration()
+        assert state.iteration_count == 3
+        assert state.session_iteration_count == 3
+
+        # Second session: 2 iterations
+        state.start_new_session("session-2")
+        state.start_iteration()
+        state.start_iteration()
+        assert state.iteration_count == 5
+        assert state.session_iteration_count == 2
+
+        # Third session: 1 iteration
+        state.start_new_session("session-3")
+        state.start_iteration()
+        assert state.iteration_count == 6
+        assert state.session_iteration_count == 1
 
 
 class TestPhaseEnum:

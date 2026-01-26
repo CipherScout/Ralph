@@ -249,6 +249,51 @@ class TestSaveAndLoadState:
             load_state(temp_project)
 
 
+class TestSessionIterationPersistence:
+    """Tests for session iteration count persistence."""
+
+    def test_session_iteration_count_serialized(self, temp_project: Path) -> None:
+        """session_iteration_count is saved and loaded correctly."""
+        temp_project.mkdir(parents=True)
+        state = RalphState(project_root=temp_project)
+        state.session_iteration_count = 5
+
+        save_state(state, temp_project)
+        loaded = load_state(temp_project)
+
+        assert loaded.session_iteration_count == 5
+
+    def test_missing_session_iteration_defaults_to_zero(self, temp_project: Path) -> None:
+        """Missing session_iteration_count in old state files defaults to 0."""
+        temp_project.mkdir(parents=True)
+        ralph_dir = temp_project / ".ralph"
+        ralph_dir.mkdir()
+
+        # Write state without session_iteration_count (simulating old format)
+        state_file = ralph_dir / "state.json"
+        state_file.write_text('{"project_root": "' + str(temp_project) + '", "iteration_count": 5}')
+
+        loaded = load_state(temp_project)
+        assert loaded.session_iteration_count == 0
+        assert loaded.iteration_count == 5
+
+    def test_round_trip_preserves_session_iteration(self, temp_project: Path) -> None:
+        """Save then load preserves session_iteration_count through multiple saves."""
+        temp_project.mkdir(parents=True)
+        state = RalphState(project_root=temp_project)
+
+        # Simulate session with iterations
+        state.start_iteration()
+        state.start_iteration()
+        state.start_iteration()
+
+        save_state(state, temp_project)
+        loaded = load_state(temp_project)
+
+        assert loaded.iteration_count == 3
+        assert loaded.session_iteration_count == 3
+
+
 class TestSaveAndLoadPlan:
     """Tests for plan save/load operations."""
 

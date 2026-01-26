@@ -178,14 +178,15 @@ class CircuitBreakerState:
     stagnation_count: int = 0
     last_failure_reason: str | None = None
 
-    def record_success(self, tasks_completed: int = 0) -> None:
+    def record_success(self, tasks_completed: int = 0, progress_made: bool = False) -> None:
         """Record a successful iteration.
 
         Args:
             tasks_completed: Number of tasks completed in this iteration
+            progress_made: Whether meaningful progress was made (e.g., tasks created in planning)
         """
         self.failure_count = 0
-        if tasks_completed > 0:
+        if tasks_completed > 0 or progress_made:
             self.stagnation_count = 0
         else:
             self.stagnation_count += 1
@@ -291,6 +292,7 @@ class RalphState:
     project_root: Path
     current_phase: Phase = Phase.BUILDING
     iteration_count: int = 0
+    session_iteration_count: int = 0  # Resets each session
     session_id: str | None = None
 
     # Cost tracking
@@ -331,10 +333,20 @@ class RalphState:
     def start_iteration(self) -> None:
         """Mark start of a new iteration."""
         self.iteration_count += 1
+        self.session_iteration_count += 1
         self.last_activity_at = datetime.now()
 
-    def end_iteration(self, cost_usd: float, tokens_used: int, task_completed: bool) -> None:
-        """Record iteration completion."""
+    def end_iteration(
+        self, cost_usd: float, tokens_used: int, task_completed: bool, progress_made: bool = False
+    ) -> None:
+        """Record iteration completion.
+
+        Args:
+            cost_usd: Cost of this iteration in USD
+            tokens_used: Number of tokens used in this iteration
+            task_completed: Whether a task was completed in this iteration
+            progress_made: Whether meaningful progress was made (e.g., tasks created in planning)
+        """
         self.total_cost_usd += cost_usd
         self.total_tokens_used += tokens_used
         self.session_cost_usd += cost_usd
@@ -344,9 +356,9 @@ class RalphState:
 
         if task_completed:
             self.tasks_completed_this_session += 1
-            self.circuit_breaker.record_success(tasks_completed=1)
+            self.circuit_breaker.record_success(tasks_completed=1, progress_made=True)
         else:
-            self.circuit_breaker.record_success(tasks_completed=0)
+            self.circuit_breaker.record_success(tasks_completed=0, progress_made=progress_made)
 
     def start_new_session(self, session_id: str) -> None:
         """Initialize a new session (fresh context window)."""
@@ -354,6 +366,7 @@ class RalphState:
         self.session_cost_usd = 0.0
         self.session_tokens_used = 0
         self.tasks_completed_this_session = 0
+        self.session_iteration_count = 0  # Reset session iteration counter
         self.context_budget.reset()
 
     def advance_phase(self, new_phase: Phase) -> None:

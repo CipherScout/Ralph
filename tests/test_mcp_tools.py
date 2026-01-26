@@ -13,9 +13,11 @@ from ralph.mcp_tools import (
     ValidationError,
     _format_result,
     _validate_category,
+    _validate_dependencies,
     _validate_priority,
     _validate_task_id,
     _validate_tokens_used,
+    _validate_verification_criteria,
     get_ralph_tool_names,
     ralph_add_task,
     ralph_append_learning,
@@ -179,6 +181,87 @@ class TestValidateCategory:
         """Non-string values are rejected."""
         with pytest.raises(ValidationError, match="must be a string"):
             _validate_category(123)
+
+
+class TestValidateDependencies:
+    """Tests for dependencies validation."""
+
+    def test_none_returns_none(self) -> None:
+        """None value returns None."""
+        assert _validate_dependencies(None) is None
+
+    def test_empty_string_returns_none(self) -> None:
+        """Empty string returns None."""
+        assert _validate_dependencies("") is None
+        assert _validate_dependencies("   ") is None
+
+    def test_single_string_converted_to_list(self) -> None:
+        """Single string is wrapped in list."""
+        result = _validate_dependencies("task-001")
+        assert result == ["task-001"]
+
+    def test_comma_separated_string_split(self) -> None:
+        """Comma-separated string is split into list."""
+        result = _validate_dependencies("task-001, task-002, task-003")
+        assert result == ["task-001", "task-002", "task-003"]
+
+    def test_list_preserved(self) -> None:
+        """List input is validated and preserved."""
+        result = _validate_dependencies(["task-001", "task-002"])
+        assert result == ["task-001", "task-002"]
+
+    def test_strips_whitespace(self) -> None:
+        """Whitespace is stripped from dependencies."""
+        result = _validate_dependencies("  task-001  ,  task-002  ")
+        assert result == ["task-001", "task-002"]
+
+    def test_validates_each_dependency(self) -> None:
+        """Each dependency is validated as task ID."""
+        with pytest.raises(ValidationError, match="alphanumeric"):
+            _validate_dependencies(["task.invalid"])
+
+    def test_rejects_invalid_type(self) -> None:
+        """Invalid types are rejected."""
+        with pytest.raises(ValidationError, match="must be a list or comma-separated string"):
+            _validate_dependencies(123)
+
+
+class TestValidateVerificationCriteria:
+    """Tests for verification criteria validation."""
+
+    def test_none_returns_none(self) -> None:
+        """None value returns None."""
+        assert _validate_verification_criteria(None) is None
+
+    def test_empty_string_returns_none(self) -> None:
+        """Empty string returns None."""
+        assert _validate_verification_criteria("") is None
+        assert _validate_verification_criteria("   ") is None
+
+    def test_single_string_converted_to_list(self) -> None:
+        """Single string is wrapped in list."""
+        result = _validate_verification_criteria("All tests pass")
+        assert result == ["All tests pass"]
+
+    def test_list_preserved(self) -> None:
+        """List input is preserved."""
+        result = _validate_verification_criteria(["Test 1", "Test 2"])
+        assert result == ["Test 1", "Test 2"]
+
+    def test_strips_whitespace(self) -> None:
+        """Whitespace is stripped from criteria."""
+        result = _validate_verification_criteria("  All tests pass  ")
+        assert result == ["All tests pass"]
+
+    def test_rejects_non_string_items(self) -> None:
+        """Non-string list items are rejected."""
+        with pytest.raises(ValidationError, match="must be a string"):
+            _validate_verification_criteria([123])
+
+    def test_rejects_invalid_type(self) -> None:
+        """Invalid types are rejected."""
+        with pytest.raises(ValidationError, match="must be a list or string"):
+            _validate_verification_criteria(123)
 
 
 class TestFormatResult:

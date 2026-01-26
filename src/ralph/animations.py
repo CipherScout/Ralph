@@ -190,6 +190,8 @@ class ThinkingSpinner:
     - Thinking verb that changes periodically
     - Token counter (if provided)
     - Optional tip/phrase
+
+    Thread-safe implementation using threading.Event for synchronization.
     """
 
     def __init__(
@@ -209,7 +211,12 @@ class ThinkingSpinner:
         self.refresh_rate = refresh_rate
         self.show_tips = show_tips
 
-        self._running = False
+        # Thread synchronization
+        self._stop_event = threading.Event()
+        self._lock = threading.Lock()
+        self._animation_thread: threading.Thread | None = None
+
+        # Animation state
         self._frame_index = 0
         self._tokens = 0
         self._cost = 0.0
@@ -251,22 +258,29 @@ class ThinkingSpinner:
 
     def start(self) -> None:
         """Start the animated spinner."""
-        if self._running:
-            return
+        # Wait for any previous thread to finish first
+        if self._animation_thread is not None and self._animation_thread.is_alive():
+            self._stop_event.set()
+            self._animation_thread.join(timeout=0.5)
 
-        self._running = True
+        # Clear the stop event for the new run
+        self._stop_event.clear()
+
+        # Reset animation state
         self._frame_index = 0
         self._verb = get_random_thinking_verb()
         self._tip = get_random_phrase("thinking") if self.show_tips else ""
         self._last_verb_change = time.time()
 
-        self._live = Live(
-            self._render(),
-            console=self.console,
-            refresh_per_second=int(1 / self.refresh_rate),
-            transient=True,  # Remove spinner when stopped
-        )
-        self._live.start()
+        # Create and start Live display with lock protection
+        with self._lock:
+            self._live = Live(
+                self._render(),
+                console=self.console,
+                refresh_per_second=int(1 / self.refresh_rate),
+                transient=True,  # Remove spinner when stopped
+            )
+            self._live.start()
 
         # Start animation thread
         self._animation_thread = threading.Thread(target=self._animate, daemon=True)
@@ -274,7 +288,7 @@ class ThinkingSpinner:
 
     def _animate(self) -> None:
         """Animation loop running in background thread."""
-        while self._running:
+        while not self._stop_event.is_set():
             self._frame_index += 1
 
             # Periodically change the thinking verb
@@ -284,11 +298,18 @@ class ThinkingSpinner:
                 self._tip = get_random_phrase("thinking") if self.show_tips else ""
                 self._last_verb_change = now
 
-            # Update the display
-            if self._live:
-                self._live.update(self._render())
+            # Update the display with lock protection
+            with self._lock:
+                if self._live:
+                    try:
+                        self._live.update(self._render())
+                    except Exception:
+                        # Live display may have been stopped
+                        break
 
-            time.sleep(self.refresh_rate)
+            # Interruptible sleep - returns True if stop event is set
+            if self._stop_event.wait(self.refresh_rate):
+                break
 
     def update(
         self,
@@ -312,10 +333,22 @@ class ThinkingSpinner:
 
     def stop(self) -> None:
         """Stop the spinner animation."""
-        self._running = False
-        if self._live:
-            self._live.stop()
-            self._live = None
+        # Signal the animation thread to stop
+        self._stop_event.set()
+
+        # Wait for thread to finish
+        if self._animation_thread is not None:
+            self._animation_thread.join(timeout=0.5)
+            self._animation_thread = None
+
+        # Clean up Live display with lock protection
+        with self._lock:
+            if self._live:
+                try:
+                    self._live.stop()
+                except Exception:
+                    pass  # Live may already be stopped
+                self._live = None
 
 
 class PhaseAnimation:

@@ -416,10 +416,20 @@ class TestPhaseCommands:
         assert result.exit_code == 1
         assert "not initialized" in result.stdout.lower()
 
-    def test_run_shows_starting(self, tmp_path: Path) -> None:
+    @patch("ralph.runner.LoopRunner")
+    def test_run_shows_starting(self, mock_runner_cls: MagicMock, tmp_path: Path) -> None:
         """Test run shows starting message."""
         initialize_state(tmp_path)
         initialize_plan(tmp_path)  # Also need to initialize plan
+
+        # Mock the LoopRunner to not make real SDK calls
+        mock_runner = MagicMock()
+        mock_runner.should_continue.return_value = (False, "test complete")  # Tuple
+        mock_runner.current_phase = Phase.BUILDING
+        mock_runner.state = MagicMock(session_id="test-session")
+        mock_runner.get_system_prompt.return_value = "Test prompt"
+        mock_runner.result = MagicMock(status="completed")
+        mock_runner_cls.return_value = mock_runner
 
         result = runner.invoke(app, ["run", "-p", str(tmp_path)])
         assert result.exit_code == 0
@@ -703,10 +713,21 @@ class TestRunCommand:
         assert result.exit_code == 1
         assert "invalid phase" in result.stdout.lower()
 
-    def test_run_shows_loop_status(self, tmp_path: Path) -> None:
+    @patch("ralph.runner.LoopRunner")
+    def test_run_shows_loop_status(self, mock_runner_cls: MagicMock, tmp_path: Path) -> None:
         """Test run shows loop status."""
+        from ralph.runner import LoopStatus
         initialize_state(tmp_path)
         initialize_plan(tmp_path)
+
+        # Mock the LoopRunner to not make real SDK calls
+        mock_runner = MagicMock()
+        mock_runner.should_continue.return_value = (False, "test complete")  # Tuple
+        mock_runner.current_phase = Phase.BUILDING
+        mock_runner.state = MagicMock(session_id="test-session")
+        mock_runner.get_system_prompt.return_value = "Test prompt"
+        mock_runner.result = MagicMock(status=LoopStatus.COMPLETED)
+        mock_runner_cls.return_value = mock_runner
 
         result = runner.invoke(app, ["run", "-p", str(tmp_path)])
         assert result.exit_code == 0

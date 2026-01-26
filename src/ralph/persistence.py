@@ -142,6 +142,7 @@ def _deserialize_ralph_state(data: dict[str, Any]) -> RalphState:
         project_root=Path(data["project_root"]),
         current_phase=Phase(data.get("current_phase", "building")),
         iteration_count=data.get("iteration_count", 0),
+        session_iteration_count=data.get("session_iteration_count", 0),
         session_id=data.get("session_id"),
         total_cost_usd=data.get("total_cost_usd", 0.0),
         total_tokens_used=data.get("total_tokens_used", 0),

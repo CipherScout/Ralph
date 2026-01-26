@@ -128,6 +128,14 @@ class PhaseExecutor(ABC):
         """
         pass
 
+    def _get_task_count(self) -> int:
+        """Get current task count from plan (force reload)."""
+        self._plan = None  # Force reload from disk
+        try:
+            return len(self.plan.tasks)
+        except Exception:
+            return 0
+
     async def run_iteration(
         self,
         prompt: str,
@@ -147,6 +155,9 @@ class PhaseExecutor(ABC):
         # Start iteration tracking
         self.state.start_iteration()
 
+        # Track task count before iteration (for planning phase progress detection)
+        tasks_before = self._get_task_count() if self.phase == Phase.PLANNING else 0
+
         # Run iteration
         result = await self.client.run_iteration(
             prompt=prompt,
@@ -155,11 +166,16 @@ class PhaseExecutor(ABC):
             max_turns=max_turns,
         )
 
+        # Check if tasks were created (for planning phase)
+        tasks_after = self._get_task_count() if self.phase == Phase.PLANNING else 0
+        progress_made = (tasks_after > tasks_before)
+
         # Record iteration metrics
         self.state.end_iteration(
             cost_usd=result.cost_usd,
             tokens_used=result.tokens_used,
             task_completed=result.task_completed,
+            progress_made=progress_made,
         )
 
         # Save state after each iteration
@@ -205,6 +221,9 @@ class PhaseExecutor(ABC):
         # Start iteration tracking
         self.state.start_iteration()
 
+        # Track task count before iteration (for planning phase progress detection)
+        tasks_before = self._get_task_count() if self.phase == Phase.PLANNING else 0
+
         iteration_tokens = 0
         iteration_cost = 0.0
         task_completed = False
@@ -239,11 +258,16 @@ class PhaseExecutor(ABC):
                     break
 
         finally:
+            # Check if tasks were created (for planning phase)
+            tasks_after = self._get_task_count() if self.phase == Phase.PLANNING else 0
+            progress_made = (tasks_after > tasks_before)
+
             # Record iteration metrics
             self.state.end_iteration(
                 cost_usd=iteration_cost,
                 tokens_used=iteration_tokens,
                 task_completed=task_completed,
+                progress_made=progress_made,
             )
 
             # Save state after iteration
