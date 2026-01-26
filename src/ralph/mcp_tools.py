@@ -372,31 +372,115 @@ async def ralph_increment_retry(args: dict[str, Any]) -> dict[str, Any]:
 
 
 @tool(
+    "ralph_validate_discovery_outputs",
+    (
+        "Validate that all required discovery outputs exist. "
+        "Call this BEFORE signaling completion to verify PRD.md, SPEC files, "
+        "and TECHNICAL_ARCHITECTURE.md are all present."
+    ),
+    {},
+)
+async def ralph_validate_discovery_outputs(args: dict[str, Any]) -> dict[str, Any]:
+    """Validate discovery phase outputs exist."""
+    tools = _get_tools()
+    project_root = tools.project_root
+    specs_dir = project_root / "specs"
+
+    results: dict[str, Any] = {
+        "prd_exists": False,
+        "architecture_exists": False,
+        "spec_files": [],
+        "all_valid": False,
+    }
+
+    if specs_dir.exists():
+        results["prd_exists"] = (specs_dir / "PRD.md").exists()
+        results["architecture_exists"] = (specs_dir / "TECHNICAL_ARCHITECTURE.md").exists()
+        results["spec_files"] = [f.name for f in specs_dir.glob("SPEC-*.md")]
+
+    results["all_valid"] = (
+        results["prd_exists"]
+        and results["architecture_exists"]
+        and len(results["spec_files"]) > 0
+    )
+
+    if results["all_valid"]:
+        content = (
+            f"All required documents exist:\n"
+            f"- specs/PRD.md: EXISTS\n"
+            f"- specs/TECHNICAL_ARCHITECTURE.md: EXISTS\n"
+            f"- SPEC files: {len(results['spec_files'])} found "
+            f"({', '.join(results['spec_files'])})\n\n"
+            f"You may now call ralph_signal_discovery_complete."
+        )
+        return {"content": [{"type": "text", "text": content}]}
+    else:
+        missing = []
+        if not results["prd_exists"]:
+            missing.append("specs/PRD.md")
+        if not results["architecture_exists"]:
+            missing.append("specs/TECHNICAL_ARCHITECTURE.md")
+        if not results["spec_files"]:
+            missing.append("specs/SPEC-NNN-*.md (at least one)")
+        content = (
+            f"MISSING DOCUMENTS - Cannot signal completion yet:\n"
+            f"- {chr(10).join(f'  - {m}' for m in missing)}\n\n"
+            f"Create the missing documents before signaling completion."
+        )
+        return {"content": [{"type": "text", "text": content}], "is_error": True}
+
+
+@tool(
     "ralph_signal_discovery_complete",
-    "Signal that the discovery phase is complete. Call this when all requirements have been gathered and specs created.",
+    (
+        "Signal discovery phase complete. Call ONLY when all required documents exist: "
+        "PRD.md, at least one SPEC-NNN-*.md file, and TECHNICAL_ARCHITECTURE.md. "
+        "Use ralph_validate_discovery_outputs first to verify."
+    ),
     {
         "summary": str,
         "specs_created": list,
+        "prd_created": bool,
+        "architecture_created": bool,
     },
 )
 async def ralph_signal_discovery_complete(args: dict[str, Any]) -> dict[str, Any]:
-    """Signal that discovery phase is complete."""
+    """Signal that discovery phase is complete with validation."""
     tools = _get_tools()
     summary = args.get("summary", "Discovery complete")
     specs = args.get("specs_created", [])
+    prd_created = args.get("prd_created", False)
+    architecture_created = args.get("architecture_created", False)
 
-    # Update state to signal completion
+    # Validation warnings (non-blocking, but logged)
+    warnings: list[str] = []
+    if not prd_created:
+        warnings.append("Warning: PRD.md not confirmed as created (prd_created=false)")
+    if not architecture_created:
+        warnings.append(
+            "Warning: TECHNICAL_ARCHITECTURE.md not confirmed as created "
+            "(architecture_created=false)"
+        )
+    if not specs or len(specs) == 0:
+        warnings.append("Warning: No SPEC files confirmed as created (specs_created empty)")
+
+    # Update state to signal completion with validation info
     result = tools.signal_phase_complete(
         phase="discovery",
         summary=str(summary),
-        artifacts={"specs_created": specs},
+        artifacts={
+            "specs_created": specs,
+            "prd_created": prd_created,
+            "architecture_created": architecture_created,
+            "validation_warnings": warnings,
+        },
     )
     return _format_result(result)
 
 
 @tool(
     "ralph_signal_planning_complete",
-    "Signal that the planning phase is complete. Call this when implementation plan is ready with all tasks.",
+    "Signal planning phase complete. Call when implementation plan is ready with all tasks.",
     {
         "summary": str,
         "task_count": int,
@@ -511,6 +595,7 @@ RALPH_MCP_TOOLS = [
     ralph_get_state_summary,
     ralph_add_task,
     ralph_increment_retry,
+    ralph_validate_discovery_outputs,
     ralph_signal_discovery_complete,
     ralph_signal_planning_complete,
     ralph_signal_building_complete,
@@ -557,6 +642,7 @@ def get_ralph_tool_names(server_name: str = "ralph") -> list[str]:
         "ralph_get_state_summary",
         "ralph_add_task",
         "ralph_increment_retry",
+        "ralph_validate_discovery_outputs",
         "ralph_signal_discovery_complete",
         "ralph_signal_planning_complete",
         "ralph_signal_building_complete",

@@ -7,17 +7,13 @@ and token counters.
 
 from __future__ import annotations
 
-import asyncio
+import contextlib
 import random
-import sys
 import threading
 import time
-from typing import Callable
 
 from rich.console import Console
 from rich.live import Live
-from rich.spinner import Spinner
-from rich.style import Style
 from rich.text import Text
 
 # Claude Code style braille spinner frames (fixed-width for smooth animation)
@@ -251,7 +247,10 @@ class ThinkingSpinner:
         if self.show_tips and self._tip:
             # Truncate tip to fit
             max_tip_len = 40
-            tip_display = self._tip[:max_tip_len] + "..." if len(self._tip) > max_tip_len else self._tip
+            if len(self._tip) > max_tip_len:
+                tip_display = self._tip[:max_tip_len] + "..."
+            else:
+                tip_display = self._tip
             text.append(f"  {tip_display}", style="dim cyan italic")
 
         return text
@@ -344,10 +343,8 @@ class ThinkingSpinner:
         # Clean up Live display with lock protection
         with self._lock:
             if self._live:
-                try:
+                with contextlib.suppress(Exception):
                     self._live.stop()
-                except Exception:
-                    pass  # Live may already be stopped
                 self._live = None
 
 

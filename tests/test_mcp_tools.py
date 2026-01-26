@@ -30,7 +30,9 @@ from ralph.mcp_tools import (
     ralph_mark_task_blocked,
     ralph_mark_task_complete,
     ralph_mark_task_in_progress,
+    ralph_signal_discovery_complete,
     ralph_update_memory,
+    ralph_validate_discovery_outputs,
 )
 from ralph.tools import ToolResult
 
@@ -592,6 +594,140 @@ class TestRalphIncrementRetry:
         assert "is_error" in result
 
 
+class TestRalphValidateDiscoveryOutputs:
+    """Tests for ralph_validate_discovery_outputs tool."""
+
+    @pytest.mark.asyncio
+    async def test_validates_all_documents_exist(self, tmp_path) -> None:
+        """Reports success when all documents exist."""
+        from ralph.mcp_tools import _ralph_tools
+        from ralph.tools import RalphTools
+
+        # Create all required documents
+        specs_dir = tmp_path / "specs"
+        specs_dir.mkdir()
+        (specs_dir / "PRD.md").write_text("# PRD")
+        (specs_dir / "SPEC-001-auth.md").write_text("# Auth")
+        (specs_dir / "TECHNICAL_ARCHITECTURE.md").write_text("# Arch")
+
+        mock_tools = MagicMock(spec=RalphTools)
+        mock_tools.project_root = tmp_path
+
+        with patch("ralph.mcp_tools._ralph_tools", mock_tools):
+            result = await ralph_validate_discovery_outputs.handler({})
+
+        assert "is_error" not in result
+        assert "All required documents exist" in result["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_reports_missing_prd(self, tmp_path) -> None:
+        """Reports error when PRD.md is missing."""
+        from ralph.tools import RalphTools
+
+        specs_dir = tmp_path / "specs"
+        specs_dir.mkdir()
+        (specs_dir / "SPEC-001-auth.md").write_text("# Auth")
+        (specs_dir / "TECHNICAL_ARCHITECTURE.md").write_text("# Arch")
+
+        mock_tools = MagicMock(spec=RalphTools)
+        mock_tools.project_root = tmp_path
+
+        with patch("ralph.mcp_tools._ralph_tools", mock_tools):
+            result = await ralph_validate_discovery_outputs.handler({})
+
+        assert result.get("is_error") is True
+        assert "PRD.md" in result["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_reports_missing_architecture(self, tmp_path) -> None:
+        """Reports error when TECHNICAL_ARCHITECTURE.md is missing."""
+        from ralph.tools import RalphTools
+
+        specs_dir = tmp_path / "specs"
+        specs_dir.mkdir()
+        (specs_dir / "PRD.md").write_text("# PRD")
+        (specs_dir / "SPEC-001-auth.md").write_text("# Auth")
+
+        mock_tools = MagicMock(spec=RalphTools)
+        mock_tools.project_root = tmp_path
+
+        with patch("ralph.mcp_tools._ralph_tools", mock_tools):
+            result = await ralph_validate_discovery_outputs.handler({})
+
+        assert result.get("is_error") is True
+        assert "TECHNICAL_ARCHITECTURE.md" in result["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_reports_missing_spec_files(self, tmp_path) -> None:
+        """Reports error when SPEC files are missing."""
+        from ralph.tools import RalphTools
+
+        specs_dir = tmp_path / "specs"
+        specs_dir.mkdir()
+        (specs_dir / "PRD.md").write_text("# PRD")
+        (specs_dir / "TECHNICAL_ARCHITECTURE.md").write_text("# Arch")
+
+        mock_tools = MagicMock(spec=RalphTools)
+        mock_tools.project_root = tmp_path
+
+        with patch("ralph.mcp_tools._ralph_tools", mock_tools):
+            result = await ralph_validate_discovery_outputs.handler({})
+
+        assert result.get("is_error") is True
+        assert "SPEC" in result["content"][0]["text"]
+
+
+class TestRalphSignalDiscoveryComplete:
+    """Tests for ralph_signal_discovery_complete tool."""
+
+    @pytest.mark.asyncio
+    async def test_signals_completion_with_all_params(self) -> None:
+        """Signals completion with all validation parameters."""
+        mock_tools = MagicMock()
+        mock_tools.signal_phase_complete.return_value = ToolResult(
+            success=True, content="Discovery phase marked complete"
+        )
+
+        with patch("ralph.mcp_tools._ralph_tools", mock_tools):
+            result = await ralph_signal_discovery_complete.handler(
+                {
+                    "summary": "Requirements gathered",
+                    "specs_created": ["SPEC-001-auth.md"],
+                    "prd_created": True,
+                    "architecture_created": True,
+                }
+            )
+
+        assert "content" in result
+        mock_tools.signal_phase_complete.assert_called_once()
+        call_args = mock_tools.signal_phase_complete.call_args
+        assert call_args.kwargs["phase"] == "discovery"
+        assert call_args.kwargs["artifacts"]["prd_created"] is True
+        assert call_args.kwargs["artifacts"]["architecture_created"] is True
+
+    @pytest.mark.asyncio
+    async def test_includes_warnings_for_missing_confirmations(self) -> None:
+        """Includes warnings when document confirmations are missing."""
+        mock_tools = MagicMock()
+        mock_tools.signal_phase_complete.return_value = ToolResult(
+            success=True, content="Discovery phase marked complete"
+        )
+
+        with patch("ralph.mcp_tools._ralph_tools", mock_tools):
+            result = await ralph_signal_discovery_complete.handler(
+                {
+                    "summary": "Done",
+                    "specs_created": [],
+                    "prd_created": False,
+                    "architecture_created": False,
+                }
+            )
+
+        call_args = mock_tools.signal_phase_complete.call_args
+        warnings = call_args.kwargs["artifacts"]["validation_warnings"]
+        assert len(warnings) == 3  # One for each missing confirmation
+
+
 class TestGetRalphToolNames:
     """Tests for get_ralph_tool_names function."""
 
@@ -613,6 +749,8 @@ class TestGetRalphToolNames:
         assert "mcp__ralph__ralph_get_state_summary" in names
         assert "mcp__ralph__ralph_add_task" in names
         assert "mcp__ralph__ralph_increment_retry" in names
+        assert "mcp__ralph__ralph_validate_discovery_outputs" in names
+        assert "mcp__ralph__ralph_signal_discovery_complete" in names
         assert "mcp__ralph__ralph_update_memory" in names
 
     def test_respects_custom_server_name(self) -> None:
@@ -627,8 +765,8 @@ class TestRalphMcpToolsConstant:
 
     def test_has_expected_count(self) -> None:
         """Has expected number of tools."""
-        # 9 original tools + 4 phase completion signal tools + 1 memory tool
-        assert len(RALPH_MCP_TOOLS) == 14
+        # 9 original tools + 4 phase completion signal tools + 1 memory tool + 1 validation tool
+        assert len(RALPH_MCP_TOOLS) == 15
 
     def test_all_have_handler(self) -> None:
         """All tools have callable handler."""

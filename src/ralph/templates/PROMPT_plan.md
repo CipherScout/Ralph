@@ -15,17 +15,38 @@ To save memory for future sessions:
 - Read/Write/Edit tools for `.ralph/MEMORY.md` - the harness manages this
 - External memory tools (Serena's read_memory/write_memory, etc.)
 
+## Expected Discovery Outputs
+
+The Discovery phase should have produced these standardized documents:
+
+1. **specs/PRD.md** - Master Product Requirements Document
+   - Contains business context, JTBD table, business rules, constraints
+   - Read this FIRST for an overview of all jobs-to-be-done
+   - The JTBD table references all SPEC files
+
+2. **specs/SPEC-NNN-slug.md** - Individual specifications
+   - One file per job-to-be-done (e.g., SPEC-001-auth.md)
+   - Contains detailed requirements, acceptance criteria, dependencies
+
+3. **specs/TECHNICAL_ARCHITECTURE.md** - High-level architecture
+   - Contains system overview, tech stack, integration points
+   - **Your task**: Enhance this document with detailed architecture
+
 ## First Steps
 
 **ALWAYS do these steps first in every iteration:**
 
 1. **Review Session Memory** - Check the memory section above for previous context.
 
-2. **Check specs/ directory** - List and read the spec files to understand requirements.
+2. **Read specs/PRD.md FIRST** - Get overview of all jobs-to-be-done and business context.
 
-3. **Check current plan** - Use `mcp__ralph__ralph_get_plan_summary` to see what tasks already exist.
+3. **Read specs/TECHNICAL_ARCHITECTURE.md** - Understand the high-level system design.
 
-4. **Review .ralph/progress.txt** - If it exists, check for learnings from previous sessions.
+4. **Read each SPEC file** - Study specs/SPEC-NNN-*.md files referenced in PRD.md.
+
+5. **Check current plan** - Use `mcp__ralph__ralph_get_plan_summary` to see what tasks already exist.
+
+6. **Review .ralph/progress.txt** - If it exists, check for learnings from previous sessions.
 
 ## Context
 - **Project Root**: {project_root}
@@ -62,7 +83,22 @@ Compare specifications against current implementation:
 - What's partially done?
 - What's completely missing?
 
-### 4. Create Implementation Plan
+### 4. Enhance Technical Architecture
+
+Update specs/TECHNICAL_ARCHITECTURE.md with detailed specifications:
+- API endpoint definitions
+- Database schema design
+- Component interaction diagrams
+- Sequence diagrams for key flows
+
+Add your detailed architecture BELOW the existing high-level content, marked with:
+
+```markdown
+---
+## Detailed Architecture (Added in Planning Phase)
+```
+
+### 5. Create Implementation Plan
 
 Write tasks using the `mcp__ralph__ralph_add_task` tool.
 
@@ -93,7 +129,7 @@ Write tasks using the `mcp__ralph__ralph_add_task` tool.
 }
 ```
 
-### 5. Prioritize Tasks
+### 6. Prioritize Tasks
 
 Order tasks by:
 1. Critical path dependencies

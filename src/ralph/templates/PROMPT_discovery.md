@@ -33,9 +33,121 @@ To save memory for future sessions:
 ## Goal
 {goal}
 
+## REQUIRED OUTPUTS - Non-Negotiable
+
+Discovery phase MUST produce these EXACT files before signaling completion:
+
+### 1. specs/PRD.md - Product Requirements Document
+
+The master document containing business logic, rules, constraints, and objectives.
+**MUST** reference all SPEC files in a JTBD table.
+
+```markdown
+# Product Requirements Document: {Project Name}
+
+## Overview
+{High-level summary of what is being built and why}
+
+## Business Context
+- **Problem Statement**: {What problem does this solve?}
+- **Target Users**: {Who will use this?}
+- **Success Metrics**: {How do we measure success?}
+
+## Jobs to Be Done
+
+| Job ID | Description | Spec File |
+|--------|-------------|-----------|
+| JTBD-001 | {job description} | [SPEC-001-slug](./SPEC-001-slug.md) |
+| JTBD-002 | {job description} | [SPEC-002-slug](./SPEC-002-slug.md) |
+
+## Business Rules
+1. {Critical business logic rule}
+
+## Global Constraints
+- **Technical**: {Technology requirements}
+- **Timeline**: {Deadline constraints}
+
+## Non-Goals (Explicit Exclusions)
+- {What we will NOT build}
+
+## References
+- [TECHNICAL_ARCHITECTURE.md](./TECHNICAL_ARCHITECTURE.md)
+```
+
+### 2. specs/SPEC-NNN-slug.md - Individual Specifications
+
+One file per Job-to-Be-Done discovered:
+- NNN = 3-digit number (001, 002, 003, etc.)
+- slug = kebab-case description (auth, user-profile, payment-flow)
+- Example: `specs/SPEC-001-user-authentication.md`
+
+```markdown
+# SPEC-{NNN}: {Title}
+
+**JTBD**: When {situation}, I want to {motivation}, so I can {expected outcome}
+
+## Problem Statement
+{Clear description of what problem this specification addresses}
+
+## Functional Requirements
+1. {Requirement 1}
+2. {Requirement 2}
+
+## User Stories
+- As a {role}, I want {feature} so that {benefit}
+
+## Success Criteria
+- [ ] {Measurable outcome 1}
+- [ ] {Measurable outcome 2}
+
+## Acceptance Criteria
+- [ ] {Testable criterion 1}
+- [ ] {Testable criterion 2}
+
+## Constraints
+- {Limitation or boundary}
+
+## Edge Cases
+- {Edge case}: {How to handle it}
+
+## Dependencies
+- **Depends on**: {Other SPEC files or "None"}
+- **Required by**: {Dependent SPEC files or "None"}
+```
+
+### 3. specs/TECHNICAL_ARCHITECTURE.md - High-Level Architecture
+
+System design document (Planning phase will add detailed specifications).
+
+```markdown
+# Technical Architecture (Discovery Phase)
+
+## System Overview
+{High-level description of the system being built}
+
+## Technology Stack
+- **Language**: {e.g., Python 3.11+}
+- **Framework**: {e.g., FastAPI}
+- **Database**: {e.g., PostgreSQL}
+
+## Integration Points
+- {External API}: {Purpose}
+
+## Security Considerations
+- **Authentication**: {Approach}
+- **Authorization**: {Model}
+
+## Performance Requirements
+- **Latency**: {Targets}
+- **Throughput**: {Expected load}
+
+---
+*Planning phase will add detailed architecture below this line.*
+```
+
 ## Your Mission
 
-Transform the user's intent into structured specifications through interactive conversation using the JTBD (Jobs to Be Done) framework.
+Transform the user's intent into the three required documents through interactive conversation using the JTBD (Jobs to Be Done) framework.
 
 ## Process
 
@@ -44,10 +156,10 @@ Transform the user's intent into structured specifications through interactive c
 - What problems are they trying to solve?
 - What capabilities do they want to add?
 
-### 2. For Each JTBD, Identify Topics of Concern
-- What are the key aspects to address?
-- What constraints exist?
-- What are the success criteria?
+### 2. For Each JTBD, Create a SPEC File
+- One SPEC-NNN-slug.md per job
+- Use sequential numbering (001, 002, 003)
+- Include all required sections
 
 ### 3. Research and Validate
 - Use WebSearch to gather relevant context and best practices
@@ -62,31 +174,16 @@ Use the `AskUserQuestion` tool to clarify:
 - Technical constraints
 - Integration points
 
-### 5. Write Specification Files
-For each topic of concern, write `specs/{{topic}}.md` with:
+### 5. Create the PRD
+After gathering requirements and creating SPEC files:
+- Write specs/PRD.md with the JTBD table
+- Ensure every SPEC file is referenced in the table
+- Include business rules and constraints
 
-```markdown
-# {{Topic Name}}
-
-## Problem Statement
-[Clear description of what problem this solves]
-
-## Success Criteria
-- [ ] Measurable outcome 1
-- [ ] Measurable outcome 2
-
-## Constraints
-- What we will NOT do
-- Non-goals
-- Limitations
-
-## Acceptance Criteria
-- [ ] Testable criterion 1
-- [ ] Testable criterion 2
-
-## Technical Notes
-[Any technical considerations]
-```
+### 6. Create the Architecture Document
+- Write specs/TECHNICAL_ARCHITECTURE.md
+- Focus on high-level design decisions
+- Leave room for Planning phase to add details
 
 ## Tools Available
 
@@ -108,6 +205,7 @@ For each topic of concern, write `specs/{{topic}}.md` with:
 
 ### Ralph State Tools
 - `mcp__ralph__ralph_get_state_summary` - Get current state
+- `mcp__ralph__ralph_validate_discovery_outputs` - Validate required documents exist
 - `mcp__ralph__ralph_signal_discovery_complete` - Signal when discovery is done
 - `mcp__ralph__ralph_update_memory` - Save context for future sessions
 
@@ -126,16 +224,26 @@ BLOCKED: git commit, git push, git merge, git rebase
 
 ## Completion Protocol
 
-**IMPORTANT**: When discovery is complete, you MUST:
+**CRITICAL**: Before signaling completion, verify ALL required documents exist:
 
-1. Ensure all specs are written to `specs/` directory
-2. Review specs for completeness and clarity
-3. Use `ralph_update_memory` to save a summary of what was discovered
-4. **Call `mcp__ralph__ralph_signal_discovery_complete`** with:
-   - `summary`: Brief summary of requirements gathered
-   - `specs_created`: List of spec files created
+### Pre-Completion Checklist
+- [ ] `specs/PRD.md` exists with populated JTBD table
+- [ ] At least one `specs/SPEC-NNN-*.md` file exists
+- [ ] `specs/TECHNICAL_ARCHITECTURE.md` exists
+- [ ] PRD.md JTBD table references ALL SPEC files created
+- [ ] All SPEC files have all required sections filled
 
-DO NOT just say "discovery complete" in text - USE THE TOOL to signal completion.
+### Validation
+Call `mcp__ralph__ralph_validate_discovery_outputs` to verify documents exist.
+
+### Signal Completion
+Only after validation passes, call `mcp__ralph__ralph_signal_discovery_complete` with:
+- `summary`: Brief summary of requirements gathered
+- `specs_created`: List of SPEC files created (e.g., ["SPEC-001-auth.md", "SPEC-002-sync.md"])
+- `prd_created`: true
+- `architecture_created`: true
+
+**DO NOT signal completion until ALL THREE document types exist.**
 
 ## Avoiding Repetition
 
@@ -147,6 +255,7 @@ DO NOT just say "discovery complete" in text - USE THE TOOL to signal completion
 ## Notes
 
 - Ask questions early - don't assume
-- One spec file per topic of concern
+- One SPEC file per Job-to-Be-Done
 - Keep specs focused and actionable
 - Include measurable success criteria
+- PRD.md is the master document - it must reference all SPEC files

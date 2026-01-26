@@ -13,10 +13,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from rich.console import Console
-from rich.panel import Panel
-from rich.prompt import Prompt
-
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
@@ -34,6 +30,9 @@ from claude_agent_sdk.types import (
     PermissionResultDeny,
     ToolPermissionContext,
 )
+from rich.console import Console
+from rich.panel import Panel
+from rich.prompt import Prompt
 
 from ralph.events import (
     StreamEvent,

@@ -166,6 +166,147 @@ class TestDiscoveryExecutor:
         assert result.error == "API error"
 
 
+class TestDiscoveryDocumentValidation:
+    """Tests for discovery phase document validation."""
+
+    def test_continuation_prompt_shows_missing_prd(self, project_path: Path) -> None:
+        """Continuation prompt indicates missing PRD.md."""
+        specs_dir = project_path / "specs"
+        specs_dir.mkdir()
+        # Create SPEC but not PRD
+        (specs_dir / "SPEC-001-auth.md").write_text("# Auth Spec")
+        (specs_dir / "TECHNICAL_ARCHITECTURE.md").write_text("# Arch")
+
+        executor = DiscoveryExecutor(project_path)
+        prompt = executor._build_continuation_prompt(1)
+
+        assert "PRD.md" in prompt
+        assert "MISSING" in prompt
+
+    def test_continuation_prompt_shows_missing_architecture(
+        self, project_path: Path
+    ) -> None:
+        """Continuation prompt indicates missing TECHNICAL_ARCHITECTURE.md."""
+        specs_dir = project_path / "specs"
+        specs_dir.mkdir()
+        (specs_dir / "PRD.md").write_text("# PRD")
+        (specs_dir / "SPEC-001-auth.md").write_text("# Auth Spec")
+        # No TECHNICAL_ARCHITECTURE.md
+
+        executor = DiscoveryExecutor(project_path)
+        prompt = executor._build_continuation_prompt(1)
+
+        assert "TECHNICAL_ARCHITECTURE.md" in prompt
+        assert "MISSING" in prompt
+
+    def test_continuation_prompt_shows_missing_spec_files(
+        self, project_path: Path
+    ) -> None:
+        """Continuation prompt indicates missing SPEC files."""
+        specs_dir = project_path / "specs"
+        specs_dir.mkdir()
+        (specs_dir / "PRD.md").write_text("# PRD")
+        (specs_dir / "TECHNICAL_ARCHITECTURE.md").write_text("# Arch")
+        # No SPEC-*.md files
+
+        executor = DiscoveryExecutor(project_path)
+        prompt = executor._build_continuation_prompt(1)
+
+        assert "SPEC" in prompt
+        assert "NONE" in prompt or "0 found" in prompt
+
+    def test_continuation_prompt_shows_all_documents_exist(
+        self, project_path: Path
+    ) -> None:
+        """Continuation prompt shows EXISTS when all documents present."""
+        specs_dir = project_path / "specs"
+        specs_dir.mkdir()
+        (specs_dir / "PRD.md").write_text("# PRD")
+        (specs_dir / "SPEC-001-auth.md").write_text("# Auth Spec")
+        (specs_dir / "TECHNICAL_ARCHITECTURE.md").write_text("# Arch")
+
+        executor = DiscoveryExecutor(project_path)
+        prompt = executor._build_continuation_prompt(1)
+
+        assert "PRD.md" in prompt
+        assert "EXISTS" in prompt
+        assert "1 found" in prompt
+
+    @patch("ralph.executors.create_ralph_client")
+    async def test_execute_includes_validation_artifacts(
+        self, mock_create_client: MagicMock, project_path: Path
+    ) -> None:
+        """Execute result includes validation artifacts."""
+        # Create all required documents
+        specs_dir = project_path / "specs"
+        specs_dir.mkdir()
+        (specs_dir / "PRD.md").write_text("# PRD")
+        (specs_dir / "SPEC-001-auth.md").write_text("# Auth Spec")
+        (specs_dir / "TECHNICAL_ARCHITECTURE.md").write_text("# Arch")
+
+        mock_client = MagicMock()
+        mock_client.run_iteration = AsyncMock(
+            return_value=IterationResult(
+                success=True,
+                task_completed=False,
+                task_id=None,
+                error=None,
+                cost_usd=0.05,
+                tokens_used=5000,
+                final_text="Discovery complete",
+                needs_handoff=False,
+                metrics=IterationMetrics(),
+            )
+        )
+        mock_create_client.return_value = mock_client
+
+        executor = DiscoveryExecutor(project_path)
+        result = await executor.execute(initial_goal="Build something")
+
+        assert result.success is True
+        assert "prd_created" in result.artifacts
+        assert "architecture_created" in result.artifacts
+        assert "spec_files" in result.artifacts
+        assert result.artifacts["prd_created"] is True
+        assert result.artifacts["architecture_created"] is True
+        assert "SPEC-001-auth.md" in result.artifacts["spec_files"]
+
+    @patch("ralph.executors.create_ralph_client")
+    async def test_execute_warns_about_missing_documents(
+        self, mock_create_client: MagicMock, project_path: Path
+    ) -> None:
+        """Execute result warns when documents are missing."""
+        # Create only legacy spec (no PRD, no TECHNICAL_ARCHITECTURE)
+        specs_dir = project_path / "specs"
+        specs_dir.mkdir()
+        (specs_dir / "some-spec.md").write_text("# Some Spec")
+
+        mock_client = MagicMock()
+        mock_client.run_iteration = AsyncMock(
+            return_value=IterationResult(
+                success=True,
+                task_completed=False,
+                task_id=None,
+                error=None,
+                cost_usd=0.05,
+                tokens_used=5000,
+                final_text="Discovery complete",
+                needs_handoff=False,
+                metrics=IterationMetrics(),
+            )
+        )
+        mock_create_client.return_value = mock_client
+
+        executor = DiscoveryExecutor(project_path)
+        result = await executor.execute(initial_goal="Build something")
+
+        assert result.success is True  # Soft validation - still succeeds
+        assert result.artifacts["prd_created"] is False
+        assert result.artifacts["architecture_created"] is False
+        assert "WARNING" in result.completion_notes
+        assert "PRD.md" in result.completion_notes
+
+
 class TestPlanningExecutor:
     """Tests for PlanningExecutor."""
 
@@ -563,3 +704,277 @@ class TestPhaseExecutorSaveOperations:
         reloaded = load_plan(project_path)
         assert len(reloaded.tasks) == 1
         assert reloaded.tasks[0].id == "new-task"
+
+
+class TestCompletionSignalPreservation:
+    """Tests for completion signal preservation during phase transitions.
+
+    These tests verify that completion signals set by MCP tools (like
+    ralph_signal_discovery_complete) are not lost when the executor
+    saves its state after an iteration.
+
+    The bug: Tools and executor use separate RalphState instances.
+    When a tool sets a completion signal and saves, then the executor
+    saves its in-memory state, the executor's save overwrites the
+    tool's changes because the executor's state doesn't have the signal.
+    """
+
+    @patch("ralph.executors.create_ralph_client")
+    async def test_completion_signal_survives_iteration_save(
+        self, mock_create_client: MagicMock, project_path: Path
+    ) -> None:
+        """Completion signal set by tool survives executor's state save.
+
+        This test simulates what happens when:
+        1. Executor runs an iteration
+        2. During iteration, a tool sets completion_signals on disk
+        3. Executor's finally block saves state
+        4. The completion signal should still be present
+        """
+        from ralph.persistence import load_state, save_state
+        from ralph.events import StreamEventType
+
+        # Track when stream_iteration yields ITERATION_END so we can
+        # simulate a tool setting the completion signal before executor saves
+        signal_set = False
+
+        async def mock_stream_iteration(prompt, phase, system_prompt, max_turns):
+            """Mock that simulates tool setting completion signal mid-iteration."""
+            nonlocal signal_set
+            from ralph.events import iteration_end_event, text_delta_event
+
+            # Yield some events
+            yield text_delta_event("Processing...")
+
+            # Simulate tool setting completion signal on disk
+            # This is what ralph_signal_discovery_complete does
+            if not signal_set:
+                disk_state = load_state(project_path)
+                disk_state.completion_signals["discovery"] = {
+                    "complete": True,
+                    "summary": "Test complete",
+                    "timestamp": "2026-01-27T12:00:00",
+                }
+                save_state(disk_state, project_path)
+                signal_set = True
+
+            # Yield iteration end
+            yield iteration_end_event(
+                iteration=1,
+                phase="discovery",
+                success=True,
+                tokens_used=1000,
+                cost_usd=0.01,
+            )
+
+        mock_client = MagicMock()
+        mock_client.stream_iteration = mock_stream_iteration
+        mock_create_client.return_value = mock_client
+
+        executor = DiscoveryExecutor(project_path)
+
+        # Run stream_iteration which will:
+        # 1. Call start_iteration() (increments counter)
+        # 2. Yield events from mock (which sets completion signal on disk)
+        # 3. In finally block, call save_state() (should preserve signal)
+        gen = executor.stream_iteration("Test prompt")
+        events = []
+        async for event in gen:
+            events.append(event)
+
+        # After iteration, reload state from disk
+        final_state = load_state(project_path)
+
+        # The completion signal should be preserved
+        # THIS WILL FAIL with the current buggy code
+        assert final_state.is_phase_complete("discovery"), (
+            "Completion signal was lost! The executor's state save "
+            "overwrote the completion signal set by the tool."
+        )
+
+    @patch("ralph.executors.create_ralph_client")
+    async def test_phase_transition_when_signal_is_set(
+        self, mock_create_client: MagicMock, project_path: Path
+    ) -> None:
+        """Discovery executor yields phase_change_event when signal is detected.
+
+        After the completion signal is set and preserved, stream_execution
+        should detect it and yield a phase_change_event.
+        """
+        from ralph.persistence import load_state, save_state
+        from ralph.events import StreamEventType
+
+        iteration_count = [0]
+
+        async def mock_stream_iteration(prompt, phase, system_prompt, max_turns):
+            """Mock that sets completion signal on first iteration."""
+            from ralph.events import iteration_end_event, text_delta_event
+
+            iteration_count[0] += 1
+
+            yield text_delta_event("Working...")
+
+            # Set completion signal on first iteration
+            if iteration_count[0] == 1:
+                disk_state = load_state(project_path)
+                disk_state.completion_signals["discovery"] = {
+                    "complete": True,
+                    "summary": "Discovery done",
+                    "timestamp": "2026-01-27T12:00:00",
+                }
+                save_state(disk_state, project_path)
+
+            yield iteration_end_event(
+                iteration=1,
+                phase="discovery",
+                success=True,
+                tokens_used=1000,
+                cost_usd=0.01,
+            )
+
+        mock_client = MagicMock()
+        mock_client.stream_iteration = mock_stream_iteration
+        mock_create_client.return_value = mock_client
+
+        executor = DiscoveryExecutor(project_path)
+
+        # Run stream_execution
+        gen = executor.stream_execution(initial_goal="Test goal", max_iterations=3)
+        events = []
+        async for event in gen:
+            events.append(event)
+
+        # Should have yielded a phase_change_event
+        phase_change_events = [
+            e for e in events if e.type == StreamEventType.PHASE_CHANGE
+        ]
+        assert len(phase_change_events) == 1, (
+            f"Expected 1 phase_change_event, got {len(phase_change_events)}. "
+            "The executor may not be detecting the completion signal."
+        )
+
+        # Verify the phase change is from discovery to planning
+        event = phase_change_events[0]
+        assert event.data.get("old_phase") == "discovery"
+        assert event.data.get("new_phase") == "planning"
+
+        # Should have only run 1 iteration (signal detected, loop breaks)
+        assert iteration_count[0] == 1, (
+            f"Expected 1 iteration, got {iteration_count[0]}. "
+            "The executor should stop after detecting completion signal."
+        )
+
+    @patch("ralph.executors.create_ralph_client")
+    async def test_iteration_counter_increments_correctly(
+        self, mock_create_client: MagicMock, project_path: Path
+    ) -> None:
+        """Iteration counter increments even when completion signal is set.
+
+        Each iteration should increment the counter, and the counter
+        should not be reset or lost due to state save race conditions.
+        """
+        from ralph.persistence import load_state, save_state
+        from ralph.events import StreamEventType
+
+        iteration_count = [0]
+
+        async def mock_stream_iteration(prompt, phase, system_prompt, max_turns):
+            """Mock that runs 3 iterations then sets completion signal."""
+            from ralph.events import iteration_end_event, text_delta_event
+
+            iteration_count[0] += 1
+
+            yield text_delta_event(f"Iteration {iteration_count[0]}")
+
+            # Set completion signal on iteration 3
+            if iteration_count[0] == 3:
+                disk_state = load_state(project_path)
+                disk_state.completion_signals["discovery"] = {
+                    "complete": True,
+                    "summary": "Done after 3 iterations",
+                    "timestamp": "2026-01-27T12:00:00",
+                }
+                save_state(disk_state, project_path)
+
+            yield iteration_end_event(
+                iteration=1,
+                phase="discovery",
+                success=True,
+                tokens_used=1000,
+                cost_usd=0.01,
+            )
+
+        mock_client = MagicMock()
+        mock_client.stream_iteration = mock_stream_iteration
+        mock_create_client.return_value = mock_client
+
+        executor = DiscoveryExecutor(project_path)
+
+        # Run stream_execution
+        gen = executor.stream_execution(initial_goal="Test", max_iterations=5)
+        async for _ in gen:
+            pass
+
+        # Reload state
+        final_state = load_state(project_path)
+
+        # Should have run exactly 3 iterations
+        assert iteration_count[0] == 3
+        # State should reflect 3 iterations
+        assert final_state.iteration_count == 3, (
+            f"Expected iteration_count=3, got {final_state.iteration_count}. "
+            "Iteration counter may have been reset or not persisted correctly."
+        )
+
+    @patch("ralph.executors.create_ralph_client")
+    async def test_signal_preserved_after_executor_completes(
+        self, mock_create_client: MagicMock, project_path: Path
+    ) -> None:
+        """Completion signal is still present after stream_execution completes.
+
+        The signal should NOT be cleared inside the executor - only the
+        CLI/orchestrator should clear it when starting the next phase.
+        """
+        from ralph.persistence import load_state, save_state
+        from ralph.events import StreamEventType
+
+        async def mock_stream_iteration(prompt, phase, system_prompt, max_turns):
+            """Mock that sets completion signal."""
+            from ralph.events import iteration_end_event, text_delta_event
+
+            yield text_delta_event("Done")
+
+            # Set completion signal
+            disk_state = load_state(project_path)
+            disk_state.completion_signals["discovery"] = {
+                "complete": True,
+                "summary": "All done",
+                "timestamp": "2026-01-27T12:00:00",
+            }
+            save_state(disk_state, project_path)
+
+            yield iteration_end_event(
+                iteration=1,
+                phase="discovery",
+                success=True,
+                tokens_used=1000,
+                cost_usd=0.01,
+            )
+
+        mock_client = MagicMock()
+        mock_client.stream_iteration = mock_stream_iteration
+        mock_create_client.return_value = mock_client
+
+        executor = DiscoveryExecutor(project_path)
+
+        # Run stream_execution to completion
+        gen = executor.stream_execution(initial_goal="Test", max_iterations=2)
+        async for _ in gen:
+            pass
+
+        # After executor completes, signal should still be present
+        final_state = load_state(project_path)
+        assert final_state.is_phase_complete("discovery"), (
+            "Completion signal was cleared inside the executor! "
+            "The signal should only be cleared by CLI when starting next phase."
+        )

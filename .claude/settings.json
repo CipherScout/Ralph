@@ -16,7 +16,8 @@
       "mcp__plugin_serena_serena__read_file",
       "mcp__plugin_serena_serena__think_about_collected_information",
       "Bash(python -m pytest tests/ -v --tb=short)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "mcp__plugin_serena_serena__find_file"
     ]
   }
 }

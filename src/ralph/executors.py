@@ -7,6 +7,7 @@ common iteration infrastructure.
 
 from __future__ import annotations
 
+import contextlib
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
@@ -337,6 +338,18 @@ class PhaseExecutor(ABC):
             tasks_after = self._get_task_count() if self.phase == Phase.PLANNING else 0
             progress_made = (tasks_after > tasks_before)
 
+            # CRITICAL FIX: Merge completion signals from disk before saving
+            # Tools (like ralph_signal_discovery_complete) save to disk directly,
+            # creating a separate RalphState instance. If we don't merge their
+            # changes, our save_state() call will overwrite the completion signal.
+            try:
+                disk_state = load_state(self.project_root)
+                for phase, signal in disk_state.completion_signals.items():
+                    if phase not in self._state.completion_signals:
+                        self._state.completion_signals[phase] = signal
+            except Exception:
+                pass  # If reload fails, continue with existing state
+
             # Record iteration metrics
             self.state.end_iteration(
                 cost_usd=iteration_cost,
@@ -367,22 +380,39 @@ class DiscoveryExecutor(PhaseExecutor):
         """Build a context-aware continuation prompt for iteration > 0.
 
         This is critical for maintaining context across iterations.
-        The agent needs to know what was done in previous iterations.
+        The agent needs to know what was done in previous iterations
+        and what required documents are still missing.
         """
-        # Get list of specs already created
+        # Check for required documents
         specs_dir = self.project_root / "specs"
-        existing_specs: list[str] = []
+        prd_exists = (specs_dir / "PRD.md").exists() if specs_dir.exists() else False
+        arch_exists = (
+            (specs_dir / "TECHNICAL_ARCHITECTURE.md").exists()
+            if specs_dir.exists()
+            else False
+        )
+
+        # Get list of SPEC files (SPEC-NNN-*.md pattern)
+        spec_files: list[str] = []
+        other_files: list[str] = []
         if specs_dir.exists():
-            existing_specs = [f.name for f in specs_dir.glob("*.md")]
+            for f in specs_dir.glob("*.md"):
+                if f.name.startswith("SPEC-"):
+                    spec_files.append(f.name)
+                elif f.name not in ("PRD.md", "TECHNICAL_ARCHITECTURE.md"):
+                    other_files.append(f.name)
 
         # Read .ralph/MEMORY.md if it exists for context
         memory_content = ""
         memory_path = self.project_root / ".ralph" / "MEMORY.md"
         if memory_path.exists():
-            try:
+            with contextlib.suppress(Exception):
                 memory_content = memory_path.read_text()[:2000]  # First 2000 chars
-            except Exception:
-                pass
+
+        # Build document status section
+        prd_status = "EXISTS" if prd_exists else "MISSING - CREATE THIS"
+        arch_status = "EXISTS" if arch_exists else "MISSING - CREATE THIS"
+        spec_status = f"{len(spec_files)} found" if spec_files else "NONE - CREATE AT LEAST ONE"
 
         prompt = f"""## Discovery Phase - Iteration {iteration + 1}
 
@@ -390,29 +420,40 @@ You are continuing the DISCOVERY phase. Here is the context from previous iterat
 
 ### CRITICAL: Ralph Memory System
 
-**MEMORY**: Use `.ralph/MEMORY.md` for persistent memory (NOT external memory MCP tools).
-- Read with `Read` tool, write with `Write`/`Edit` tool
-- **DO NOT use** Serena's read_memory/write_memory/activate_project or similar external memory tools
+**MEMORY**: Use `mcp__ralph__ralph_update_memory` for persistent memory.
+- **DO NOT use** Read/Write/Edit on `.ralph/MEMORY.md` directly
+- **DO NOT use** Serena's read_memory/write_memory or similar external memory tools
 
-### Already Created Specs
-{chr(10).join(f'- {s}' for s in existing_specs) if existing_specs else '(none yet)'}
+### Required Documents Status
 
-### Session Memory (from .ralph/MEMORY.md)
-{memory_content if memory_content else '(no memory file yet - create .ralph/MEMORY.md to persist context)'}
+| Document | Status |
+|----------|--------|
+| specs/PRD.md | {prd_status} |
+| specs/TECHNICAL_ARCHITECTURE.md | {arch_status} |
+| specs/SPEC-NNN-*.md files | {spec_status} |
+
+**DO NOT signal completion until ALL required documents exist.**
+
+### Existing SPEC Files
+{chr(10).join(f'- {s}' for s in spec_files) if spec_files else '(none yet - create at least one)'}
+
+### Session Memory
+{memory_content if memory_content else '(no memory yet)'}
 
 ### Your Task for This Iteration
 
-1. **Check .ralph/MEMORY.md**: Use the Read tool to check for previous context
-2. **Check specs/**: Review what requirement documents already exist
-3. **Continue**: Ask follow-up questions OR create remaining spec documents
-4. **Update memory**: Write summary to .ralph/MEMORY.md using Write/Edit tool
-5. **Signal Completion**: When all requirements are captured, call ralph_signal_discovery_complete
+1. **Review status above**: Which required documents are MISSING?
+2. **If requirements unclear**: Ask clarifying questions using AskUserQuestion
+3. **Create missing documents**: Write PRD.md, SPEC files, and/or TECHNICAL_ARCHITECTURE.md
+4. **Update memory**: Use ralph_update_memory to save context
+5. **Validate**: Call ralph_validate_discovery_outputs to verify all documents exist
+6. **Signal Completion**: Only when all 3 document types exist, call ralph_signal_discovery_complete
 
 **IMPORTANT**:
 - Do NOT re-ask questions that were already answered
 - Do NOT re-create specs that already exist
-- For memory, use Read/Write/Edit on `.ralph/MEMORY.md` (NOT external MCP memory tools)
-- If specs cover the requirements, signal completion using ralph_signal_discovery_complete tool
+- PRD.md must reference all SPEC files in a JTBD table
+- SPEC files must follow the SPEC-NNN-slug.md naming pattern
 """
         return prompt
 
@@ -499,14 +540,47 @@ Start by asking the user what they want to build."""
                 if result.needs_handoff:
                     break
 
-            # Clear the completion signal for next run
-            self.state.clear_phase_completion("discovery")
-            self.save_state()
+            # NOTE: Do NOT clear the completion signal here
+            # The CLI/orchestrator should clear it when starting the next phase
+            # This ensures the signal persists for the transition logic to work
 
-            # List created specs
+            # Validate required documents and categorize files
             specs_dir = self.project_root / "specs"
+            prd_exists = (specs_dir / "PRD.md").exists() if specs_dir.exists() else False
+            arch_exists = (
+                (specs_dir / "TECHNICAL_ARCHITECTURE.md").exists()
+                if specs_dir.exists()
+                else False
+            )
+            spec_files: list[str] = []
             if specs_dir.exists():
+                spec_files = [f.name for f in specs_dir.glob("SPEC-*.md")]
+                # Also include legacy specs for backwards compatibility
                 specs_created = [f.name for f in specs_dir.glob("*.md")]
+            else:
+                specs_created = []
+
+            # Build validation result
+            validation_result = {
+                "prd_exists": prd_exists,
+                "architecture_exists": arch_exists,
+                "spec_count": len(spec_files),
+                "spec_files": spec_files,
+            }
+
+            # Log warning if documents are missing (soft validation)
+            missing_docs: list[str] = []
+            if not prd_exists:
+                missing_docs.append("PRD.md")
+            if not arch_exists:
+                missing_docs.append("TECHNICAL_ARCHITECTURE.md")
+            if len(spec_files) == 0:
+                missing_docs.append("SPEC-NNN-*.md files")
+
+            completion_notes = f"Created {len(specs_created)} spec files"
+            if missing_docs:
+                missing_str = ", ".join(missing_docs)
+                completion_notes += f" (WARNING: Missing required documents: {missing_str})"
 
             return PhaseExecutionResult(
                 success=True,
@@ -516,8 +590,14 @@ Start by asking the user what they want to build."""
                 tokens_used=total_tokens,
                 needs_phase_transition=True,
                 next_phase=Phase.PLANNING,
-                artifacts={"specs_created": specs_created},
-                completion_notes=f"Created {len(specs_created)} spec files",
+                artifacts={
+                    "specs_created": specs_created,
+                    "prd_created": prd_exists,
+                    "architecture_created": arch_exists,
+                    "spec_files": spec_files,
+                    "validation": validation_result,
+                },
+                completion_notes=completion_notes,
             )
 
         except Exception as e:
@@ -640,15 +720,37 @@ Start by asking the user what they want to build."""
                     yield info_event("Discovery phase completion signal detected")
                     break
 
-            # Clear the completion signal for next run
-            self.state.clear_phase_completion("discovery")
-            self.save_state()
+            # NOTE: Do NOT clear the completion signal here
+            # The CLI/orchestrator should clear it when starting the next phase
+            # This ensures the signal persists for the transition logic to work
 
-            # List created specs
+            # Validate required documents and categorize files
             specs_dir = self.project_root / "specs"
+            prd_exists = (specs_dir / "PRD.md").exists() if specs_dir.exists() else False
+            arch_exists = (
+                (specs_dir / "TECHNICAL_ARCHITECTURE.md").exists()
+                if specs_dir.exists()
+                else False
+            )
+            spec_files: list[str] = []
             specs_created: list[str] = []
             if specs_dir.exists():
+                spec_files = [f.name for f in specs_dir.glob("SPEC-*.md")]
                 specs_created = [f.name for f in specs_dir.glob("*.md")]
+
+            # Check for missing documents and yield warnings
+            missing_docs: list[str] = []
+            if not prd_exists:
+                missing_docs.append("PRD.md")
+            if not arch_exists:
+                missing_docs.append("TECHNICAL_ARCHITECTURE.md")
+            if len(spec_files) == 0:
+                missing_docs.append("SPEC-NNN-*.md files")
+
+            if missing_docs:
+                yield info_event(
+                    f"WARNING: Missing required documents: {', '.join(missing_docs)}"
+                )
 
             # Yield completion info
             yield info_event(
@@ -692,6 +794,14 @@ class PlanningExecutor(PhaseExecutor):
         if specs_dir.exists():
             existing_specs = [f.name for f in specs_dir.glob("*.md")]
 
+        # Format task list for prompt
+        if plan.tasks:
+            task_list = chr(10).join(
+                f'- [{t.status}] {t.description[:50]}' for t in plan.tasks[:10]
+            )
+        else:
+            task_list = "(none yet)"
+
         prompt = f"""## Planning Phase - Iteration {iteration + 1}
 
 You are continuing the PLANNING phase. Here is the context:
@@ -700,7 +810,7 @@ You are continuing the PLANNING phase. Here is the context:
 {chr(10).join(f'- {s}' for s in existing_specs) if existing_specs else '(no specs found)'}
 
 ### Tasks Already Created: {task_count}
-{chr(10).join(f'- [{t.status}] {t.description[:80]}...' for t in plan.tasks[:10]) if plan.tasks else '(none yet)'}
+{task_list}
 
 ### Your Task for This Iteration
 

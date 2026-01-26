@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import subprocess
 from pathlib import Path
@@ -22,8 +23,6 @@ from ralph.animations import (
     PhaseAnimation,
     ThinkingSpinner,
     get_random_fact,
-    get_random_phrase,
-    get_tool_category,
 )
 from ralph.config import load_config
 from ralph.context import (
@@ -115,7 +114,11 @@ class RalphLiveDisplay:
                     f"[dim]({phase})[/dim]"
                 )
                 # Show a fun fact every N iterations
-                if self._iteration_count > 0 and self._iteration_count % self._show_fun_fact_at == 0:
+                show_fact = (
+                    self._iteration_count > 0
+                    and self._iteration_count % self._show_fun_fact_at == 0
+                )
+                if show_fact:
                     fact = get_random_fact()
                     self.console.print(f"  [dim italic]Did you know? {fact}[/dim italic]")
             # Start the animated thinking spinner
@@ -355,12 +358,10 @@ class RalphLiveDisplay:
     def _update_spinner(self, tokens: int = 0, cost: float = 0.0) -> None:
         """Update the spinner with current stats."""
         if self._spinner and self._spinner_active:
-            try:
+            with contextlib.suppress(Exception):
                 self._spinner.update(tokens=tokens, cost=cost)
-            except Exception:
-                pass
 
-    def get_user_input_callbacks(self) -> "UserInputCallbacks":
+    def get_user_input_callbacks(self) -> UserInputCallbacks:
         """Get callbacks for SDK user input handling.
 
         Returns callbacks that allow the SDK's AskUserQuestion handler to
@@ -1327,6 +1328,8 @@ def plan(
 
         try:
             state = load_state(path)
+            # Clear the previous phase's completion signal when starting a new phase
+            state.clear_phase_completion("discovery")
             state.current_phase = Phase.PLANNING
             save_state(state, path)
 
@@ -1440,6 +1443,8 @@ def build(
 
         try:
             state = load_state(path)
+            # Clear the previous phase's completion signal when starting a new phase
+            state.clear_phase_completion("planning")
             state.current_phase = Phase.BUILDING
             save_state(state, path)
 
@@ -1541,6 +1546,8 @@ def validate(
 
         try:
             state = load_state(path)
+            # Clear the previous phase's completion signal when starting a new phase
+            state.clear_phase_completion("building")
             state.current_phase = Phase.VALIDATION
             save_state(state, path)
 

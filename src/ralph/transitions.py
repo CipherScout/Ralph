@@ -7,6 +7,7 @@ with countdown timers that auto-continue if no user input is received.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
 from typing import TYPE_CHECKING
 
@@ -162,19 +163,15 @@ class PhaseTransitionPrompt:
                 # Cancel pending tasks
                 for task in pending:
                     task.cancel()
-                    try:
+                    with contextlib.suppress(asyncio.CancelledError):
                         await task
-                    except asyncio.CancelledError:
-                        pass
 
                 # Check what completed
                 if input_task in done:
                     try:
                         user_input = input_task.result()
-                        if user_input == "n":
-                            return False
-                        # Any other input (including empty/Enter) means continue
-                        return True
+                        # 'n' means don't continue, anything else means continue
+                        return user_input != "n"
                     except Exception:
                         return True
 

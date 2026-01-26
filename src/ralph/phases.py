@@ -235,6 +235,7 @@ def build_discovery_prompt(
     """Build the system prompt for Discovery phase.
 
     Uses Jobs-to-be-Done (JTBD) framework to capture requirements.
+    Produces standardized outputs: PRD.md, SPEC-NNN-slug.md files, TECHNICAL_ARCHITECTURE.md.
     """
     config = config or load_config(project_root)
 
@@ -257,16 +258,9 @@ To save memory for future sessions:
 
 **RALPH TOOLS**: Use `mcp__ralph__*` tools for state management:
 - `mcp__ralph__ralph_get_state_summary` - Get current state
+- `mcp__ralph__ralph_validate_discovery_outputs` - Validate required documents exist
 - `mcp__ralph__ralph_signal_discovery_complete` - Signal phase completion
 - `mcp__ralph__ralph_update_memory` - Save memory for future sessions
-
-## Your Mission
-Understand what the user wants to build by using the Jobs-to-be-Done framework.
-Ask clarifying questions to fully understand:
-- The functional situation: When [situation], I want to [motivation], so I can [expected outcome]
-- Success criteria: How will we know when it's done?
-- Constraints: Technical limitations, deadlines, existing code patterns
-- Non-functional requirements: Performance, security, maintainability
 
 ## Project Context
 - Project Root: {project_root}
@@ -280,42 +274,158 @@ Ask clarifying questions to fully understand:
 
 """
 
-    prompt += """## Your Process
-1. Review Session Memory above for previous context
-2. Check specs/ directory for existing requirement documents
-3. Ask the user clarifying questions (up to 10 questions)
-4. Write specification files to specs/ directory
-5. Use ralph_update_memory to save important context
-6. Signal completion with ralph_signal_discovery_complete
+    prompt += """## REQUIRED OUTPUTS - Non-Negotiable
 
-## Output Format
-When you have gathered enough information, write specs to the specs/ directory:
+Discovery phase MUST produce these EXACT files before signaling completion:
+
+### 1. specs/PRD.md - Product Requirements Document
+
+The master document containing business logic, rules, constraints, and objectives.
+**MUST** reference all SPEC files in a JTBD table.
 
 ```markdown
-# {{Topic Name}}
+# Product Requirements Document: {{Project Name}}
 
-## Problem Statement
-[Clear description of what problem this solves]
+## Overview
+{{High-level summary of what is being built and why}}
 
-## Success Criteria
-- [ ] Measurable outcome 1
-- [ ] Measurable outcome 2
+## Business Context
+- **Problem Statement**: {{What problem does this solve?}}
+- **Target Users**: {{Who will use this?}}
+- **Success Metrics**: {{How do we measure success?}}
 
-## Constraints
-- What we will NOT do
-- Non-goals
+## Jobs to Be Done
 
-## Acceptance Criteria
-- [ ] Testable criterion 1
-- [ ] Testable criterion 2
+| Job ID | Description | Spec File |
+|--------|-------------|-----------|
+| JTBD-001 | {{job description}} | [SPEC-001-slug](./SPEC-001-slug.md) |
+| JTBD-002 | {{job description}} | [SPEC-002-slug](./SPEC-002-slug.md) |
+
+## Business Rules
+1. {{Critical business logic rule}}
+
+## Global Constraints
+- **Technical**: {{Technology requirements}}
+- **Timeline**: {{Deadline constraints}}
+
+## Non-Goals (Explicit Exclusions)
+- {{What we will NOT build}}
+
+## References
+- [TECHNICAL_ARCHITECTURE.md](./TECHNICAL_ARCHITECTURE.md)
 ```
 
+### 2. specs/SPEC-NNN-slug.md - Individual Specifications
+
+One file per Job-to-Be-Done discovered:
+- NNN = 3-digit number (001, 002, 003, etc.)
+- slug = kebab-case description (auth, user-profile, payment-flow)
+- Example: `specs/SPEC-001-user-authentication.md`
+
+```markdown
+# SPEC-{{NNN}}: {{Title}}
+
+**JTBD**: When {{situation}}, I want to {{motivation}}, so I can {{expected outcome}}
+
+## Problem Statement
+{{Clear description of what problem this specification addresses}}
+
+## Functional Requirements
+1. {{Requirement 1}}
+2. {{Requirement 2}}
+
+## User Stories
+- As a {{role}}, I want {{feature}} so that {{benefit}}
+
+## Success Criteria
+- [ ] {{Measurable outcome 1}}
+- [ ] {{Measurable outcome 2}}
+
+## Acceptance Criteria
+- [ ] {{Testable criterion 1}}
+- [ ] {{Testable criterion 2}}
+
+## Constraints
+- {{Limitation or boundary}}
+
+## Edge Cases
+- {{Edge case}}: {{How to handle it}}
+
+## Dependencies
+- **Depends on**: {{Other SPEC files or "None"}}
+- **Required by**: {{Dependent SPEC files or "None"}}
+```
+
+### 3. specs/TECHNICAL_ARCHITECTURE.md - High-Level Architecture
+
+System design document (Planning phase will add detailed specifications).
+
+```markdown
+# Technical Architecture (Discovery Phase)
+
+## System Overview
+{{High-level description of the system being built}}
+
+## Technology Stack
+- **Language**: {{e.g., Python 3.11+}}
+- **Framework**: {{e.g., FastAPI}}
+- **Database**: {{e.g., PostgreSQL}}
+
+## Integration Points
+- {{External API}}: {{Purpose}}
+
+## Security Considerations
+- **Authentication**: {{Approach}}
+- **Authorization**: {{Model}}
+
+## Performance Requirements
+- **Latency**: {{Targets}}
+- **Throughput**: {{Expected load}}
+
+---
+*Planning phase will add detailed architecture below this line.*
+```
+
+## Your Mission
+
+Transform the user's intent into the three required documents through interactive conversation
+using the Jobs-to-be-Done (JTBD) framework.
+
+## Your Process
+
+1. **Review Session Memory** above for previous context
+2. **Check specs/ directory** for existing requirement documents
+3. **Identify Jobs to Be Done** - Ask clarifying questions to understand:
+   - The functional situation: When [situation], I want to [motivation], so I can [expected outcome]
+   - Success criteria: How will we know when it's done?
+   - Constraints: Technical limitations, deadlines, existing code patterns
+4. **Create SPEC files** - One SPEC-NNN-slug.md per JTBD
+5. **Create PRD.md** - Master document with JTBD table referencing all SPEC files
+6. **Create TECHNICAL_ARCHITECTURE.md** - High-level architecture decisions
+7. **Validate outputs** - Call ralph_validate_discovery_outputs
+8. **Signal completion** - Call ralph_signal_discovery_complete
+
 ## Important
+
 - Ask ONE question at a time using AskUserQuestion tool
 - Explore edge cases and error handling
 - Understand existing code patterns before suggesting new ones
 - Do NOT write code in this phase - only gather requirements
-- When done, call ralph_signal_discovery_complete tool
+- PRD.md is the master document - it must reference all SPEC files
+- DO NOT signal completion until ALL THREE document types exist
+
+## Completion Protocol
+
+Before signaling completion:
+1. Verify specs/PRD.md exists with populated JTBD table
+2. Verify at least one specs/SPEC-NNN-*.md file exists
+3. Verify specs/TECHNICAL_ARCHITECTURE.md exists
+4. Call ralph_validate_discovery_outputs to confirm
+5. Call ralph_signal_discovery_complete with:
+   - summary: Brief summary of requirements gathered
+   - specs_created: List of SPEC files (e.g., ["SPEC-001-auth.md"])
+   - prd_created: true
+   - architecture_created: true
 """
 
     return prompt
@@ -363,20 +473,59 @@ Each task should be completable in approximately 30 minutes of focused work.
 
 """
 
-    prompt += """## Planning Process
-1. Review Session Memory above for discovery context
-2. Read specs/ directory for requirement documents
-3. Analyze the codebase architecture
-4. Break down work into discrete, testable tasks
-5. Use ralph_add_task to add each task to the plan
+    prompt += """## Expected Discovery Outputs
+
+The Discovery phase produced these standardized documents:
+
+1. **specs/PRD.md** - Master Product Requirements Document
+   - Contains business context, JTBD table, business rules, constraints
+   - Read this FIRST for an overview of all jobs-to-be-done
+
+2. **specs/SPEC-NNN-slug.md** - Individual specifications
+   - One file per job-to-be-done (e.g., SPEC-001-auth.md)
+   - Contains detailed requirements, acceptance criteria, dependencies
+
+3. **specs/TECHNICAL_ARCHITECTURE.md** - High-level architecture
+   - Contains system overview, tech stack, integration points
+   - **Your task**: Enhance this with detailed architecture
+
+## Planning Process
+
+1. **Read specs/PRD.md FIRST** - Get overview of all jobs and business context
+2. **Read specs/TECHNICAL_ARCHITECTURE.md** - Understand high-level design
+3. **Read each SPEC file** - Study all specs/SPEC-NNN-*.md files
+4. **Enhance architecture** - Add detailed specs to TECHNICAL_ARCHITECTURE.md
+5. **Break down work** into discrete, testable tasks
+6. **Use ralph_add_task** to add each task to the plan
+
+## Architecture Enhancement
+
+Update specs/TECHNICAL_ARCHITECTURE.md with detailed specifications.
+Add your detailed content BELOW the existing high-level architecture:
+
+```markdown
+---
+## Detailed Architecture (Added in Planning Phase)
+
+### API Specifications
+[Endpoint definitions]
+
+### Database Schema
+[Schema design]
+
+### Component Interactions
+[Diagrams and descriptions]
+```
 
 ## Task Sizing Guidelines
+
 - Each task: ~30,000 tokens (roughly 30 min work)
 - Include test writing in task scope
 - One logical unit of change per task
 - Clear verification criteria
 
 ## Output Format
+
 Use the ralph_add_task MCP tool for each task:
 
 For each task, specify:
@@ -387,11 +536,13 @@ For each task, specify:
 - verification_criteria: How to verify completion
 
 ## Dependency Rules
+
 - Tasks can only depend on previously defined tasks
 - Avoid circular dependencies
 - Keep dependency chains shallow when possible
 
 ## Important
+
 - Focus on implementation order, not just logical grouping
 - Consider test infrastructure setup as tasks
 - Include documentation tasks if needed
