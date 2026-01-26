@@ -485,8 +485,16 @@ class RalphSDKClient:
 
                                 # Handle AskUserQuestion specially - need user input
                                 if block.name == "AskUserQuestion":
-                                    question = tool_input_dict.get("question", "")
-                                    options_list = tool_input_dict.get("options", [])
+                                    # AskUserQuestion uses "questions" (plural) array
+                                    # Each has: question, header, options, multiSelect
+                                    questions_list = tool_input_dict.get("questions", [])
+                                    if questions_list:
+                                        first_q = questions_list[0]
+                                        question = first_q.get("question", "")
+                                        options_list = first_q.get("options", [])
+                                    else:
+                                        question = ""
+                                        options_list = []
 
                                     # Yield NEEDS_INPUT and receive user response via send()
                                     user_response: str | None = yield needs_input_event(
