@@ -20,7 +20,9 @@ TASK_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 MAX_TASK_ID_LENGTH = 100
 MAX_DESCRIPTION_LENGTH = 5000
 MAX_LEARNING_LENGTH = 2000
+MAX_MEMORY_CONTENT_LENGTH = 10_000
 VALID_CATEGORIES = {"pattern", "antipattern", "architecture", "debugging", "build"}
+VALID_MEMORY_MODES = {"replace", "append"}
 
 
 class ValidationError(Exception):
@@ -460,6 +462,44 @@ async def ralph_signal_validation_complete(args: dict[str, Any]) -> dict[str, An
     return _format_result(result)
 
 
+@tool(
+    "ralph_update_memory",
+    (
+        "Update session memory for future sessions. Content is written to .ralph/MEMORY.md "
+        "after the iteration completes. Use 'replace' mode to overwrite all memory, "
+        "'append' mode to add to existing memory."
+    ),
+    {
+        "content": str,
+        "mode": str,
+    },
+)
+async def ralph_update_memory(args: dict[str, Any]) -> dict[str, Any]:
+    """Queue a memory update for end of iteration."""
+    try:
+        content = args.get("content", "")
+        if not isinstance(content, str):
+            raise ValidationError(f"content must be a string, got {type(content).__name__}")
+        if not content.strip():
+            raise ValidationError("content cannot be empty")
+        content = content.strip()
+        if len(content) > MAX_MEMORY_CONTENT_LENGTH:
+            raise ValidationError(f"content too long (max {MAX_MEMORY_CONTENT_LENGTH} chars)")
+
+        mode = args.get("mode", "append")
+        if not isinstance(mode, str):
+            raise ValidationError(f"mode must be a string, got {type(mode).__name__}")
+        mode = mode.lower().strip()
+        if mode not in VALID_MEMORY_MODES:
+            raise ValidationError(f"mode must be one of: {', '.join(VALID_MEMORY_MODES)}")
+    except ValidationError as e:
+        return {"content": [{"type": "text", "text": f"Validation error: {e}"}], "is_error": True}
+
+    tools = _get_tools()
+    result = tools.update_memory(content=content, mode=mode)
+    return _format_result(result)
+
+
 # List of all Ralph tools
 RALPH_MCP_TOOLS = [
     ralph_get_next_task,
@@ -475,6 +515,7 @@ RALPH_MCP_TOOLS = [
     ralph_signal_planning_complete,
     ralph_signal_building_complete,
     ralph_signal_validation_complete,
+    ralph_update_memory,
 ]
 
 
@@ -520,5 +561,6 @@ def get_ralph_tool_names(server_name: str = "ralph") -> list[str]:
         "ralph_signal_planning_complete",
         "ralph_signal_building_complete",
         "ralph_signal_validation_complete",
+        "ralph_update_memory",
     ]
     return [f"mcp__{server_name}__{name}" for name in tool_base_names]

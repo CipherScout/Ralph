@@ -590,6 +590,59 @@ class RalphTools:
                 error=str(e),
             )
 
+    def update_memory(
+        self,
+        content: str,
+        mode: str = "append",
+    ) -> ToolResult:
+        """Queue a memory update for end of iteration.
+
+        The memory will be written to .ralph/MEMORY.md when the iteration completes.
+        This allows the harness to manage memory writes deterministically.
+
+        Args:
+            content: Memory content to store
+            mode: 'replace' to overwrite, 'append' to add to existing
+
+        Returns:
+            ToolResult indicating success
+        """
+        valid_modes = {"replace", "append"}
+        if mode not in valid_modes:
+            return ToolResult(
+                success=False,
+                content=f"Invalid mode: {mode}",
+                error=f"Mode must be one of: {', '.join(valid_modes)}",
+            )
+
+        try:
+            state = self._load_state()
+
+            # Queue the memory update for flushing at end of iteration
+            state.pending_memory_update = {
+                "content": content,
+                "mode": mode,
+                "timestamp": datetime.now().isoformat(),
+            }
+
+            self._save_state(state)
+
+            return ToolResult(
+                success=True,
+                content=f"Memory update queued ({mode} mode, {len(content)} chars)",
+                data={
+                    "mode": mode,
+                    "length": len(content),
+                    "queued": True,
+                },
+            )
+        except Exception as e:
+            return ToolResult(
+                success=False,
+                content="Failed to queue memory update",
+                error=str(e),
+            )
+
 
 def create_tools(project_root: Path) -> RalphTools:
     """Create a RalphTools instance for the given project.
@@ -703,6 +756,29 @@ TOOL_DEFINITIONS = [
                 },
             },
             "required": ["task_id", "description", "priority"],
+        },
+    },
+    {
+        "name": "ralph_update_memory",
+        "description": (
+            "Update session memory. Content is written to .ralph/MEMORY.md after iteration "
+            "completes. Use 'replace' mode to overwrite all memory, 'append' to add to existing."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "Memory content to store for future sessions",
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["replace", "append"],
+                    "description": "Mode: 'replace' overwrites, 'append' adds to existing",
+                    "default": "append",
+                },
+            },
+            "required": ["content"],
         },
     },
 ]

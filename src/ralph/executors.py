@@ -21,7 +21,7 @@ from ralph.events import (
     phase_change_event,
 )
 from ralph.models import ImplementationPlan, Phase, RalphState, Task
-from ralph.persistence import load_plan, load_state, save_plan, save_state
+from ralph.persistence import load_memory, load_plan, load_state, save_memory, save_plan, save_state
 from ralph.phases import get_phase_prompt
 from ralph.sdk_client import (
     IterationResult,
@@ -112,13 +112,16 @@ class PhaseExecutor(ABC):
         pass
 
     def get_system_prompt(self, task: Task | None = None) -> str:
-        """Get the system prompt for this phase."""
-        return get_phase_prompt(
+        """Get the system prompt for this phase with memory injected."""
+        base_prompt = get_phase_prompt(
             phase=self.phase,
             project_root=self.project_root,
             task=task,
             config=self.config,
         )
+        # Inject memory content into the prompt
+        memory = self._load_memory()
+        return self._inject_memory_into_prompt(base_prompt, memory)
 
     def save_state(self) -> None:
         """Save current state."""
@@ -127,6 +130,66 @@ class PhaseExecutor(ABC):
     def save_plan(self) -> None:
         """Save current plan."""
         save_plan(self.plan, self.project_root)
+
+    def _load_memory(self) -> str | None:
+        """Load memory content for injection into prompts.
+
+        Returns:
+            Memory content from .ralph/MEMORY.md or None if not found
+        """
+        return load_memory(self.project_root)
+
+    def _inject_memory_into_prompt(self, prompt: str, memory: str | None) -> str:
+        """Inject memory section into system prompt.
+
+        Adds memory content after the first heading in the prompt.
+
+        Args:
+            prompt: The base system prompt
+            memory: Memory content to inject (or None)
+
+        Returns:
+            Prompt with memory section injected
+        """
+        if not memory:
+            memory_section = "## Session Memory\n(No previous session memory)\n"
+        else:
+            # Truncate very long memory to avoid overwhelming context
+            if len(memory) > 8000:
+                memory = memory[:8000] + "\n...(truncated)"
+            memory_section = f"## Session Memory\n{memory}\n"
+
+        # Insert after the first heading (line starting with #)
+        lines = prompt.split("\n", 1)
+        if len(lines) > 1:
+            return f"{lines[0]}\n\n{memory_section}\n{lines[1]}"
+        return f"{prompt}\n\n{memory_section}"
+
+    def _flush_pending_memory(self) -> None:
+        """Write pending memory update to file if one exists.
+
+        Called at the end of each iteration to persist any memory
+        updates queued by the ralph_update_memory tool.
+        """
+        # Force reload state to get any pending updates
+        self._state = None
+        update = self.state.pending_memory_update
+        if not update:
+            return
+
+        content = update.get("content", "")
+        mode = update.get("mode", "append")
+
+        if mode == "append":
+            existing = load_memory(self.project_root) or ""
+            if existing:
+                content = f"{existing}\n\n---\n\n{content}"
+
+        save_memory(content, self.project_root)
+
+        # Clear pending update
+        self.state.pending_memory_update = None
+        self.save_state()
 
     @abstractmethod
     async def execute(self, **kwargs: Any) -> PhaseExecutionResult:
@@ -189,6 +252,9 @@ class PhaseExecutor(ABC):
 
         # Save state after each iteration
         self.save_state()
+
+        # Flush any pending memory updates
+        self._flush_pending_memory()
 
         return result
 
@@ -282,6 +348,9 @@ class PhaseExecutor(ABC):
             # Save state after iteration
             self.save_state()
 
+            # Flush any pending memory updates
+            self._flush_pending_memory()
+
 
 class DiscoveryExecutor(PhaseExecutor):
     """Executor for the Discovery phase.
@@ -306,9 +375,9 @@ class DiscoveryExecutor(PhaseExecutor):
         if specs_dir.exists():
             existing_specs = [f.name for f in specs_dir.glob("*.md")]
 
-        # Read MEMORY.md if it exists for context
+        # Read .ralph/MEMORY.md if it exists for context
         memory_content = ""
-        memory_path = self.project_root / "MEMORY.md"
+        memory_path = self.project_root / ".ralph" / "MEMORY.md"
         if memory_path.exists():
             try:
                 memory_content = memory_path.read_text()[:2000]  # First 2000 chars
@@ -319,22 +388,30 @@ class DiscoveryExecutor(PhaseExecutor):
 
 You are continuing the DISCOVERY phase. Here is the context from previous iterations:
 
+### CRITICAL: Ralph Memory System
+
+**MEMORY**: Use `.ralph/MEMORY.md` for persistent memory (NOT external memory MCP tools).
+- Read with `Read` tool, write with `Write`/`Edit` tool
+- **DO NOT use** Serena's read_memory/write_memory/activate_project or similar external memory tools
+
 ### Already Created Specs
 {chr(10).join(f'- {s}' for s in existing_specs) if existing_specs else '(none yet)'}
 
-### Session Memory
-{memory_content if memory_content else '(no memory file yet)'}
+### Session Memory (from .ralph/MEMORY.md)
+{memory_content if memory_content else '(no memory file yet - create .ralph/MEMORY.md to persist context)'}
 
 ### Your Task for This Iteration
 
-1. **First**: Read MEMORY.md if you haven't already, to understand what was discussed
+1. **Check .ralph/MEMORY.md**: Use the Read tool to check for previous context
 2. **Check specs/**: Review what requirement documents already exist
 3. **Continue**: Ask follow-up questions OR create remaining spec documents
-4. **Signal Completion**: When all requirements are captured, call ralph_signal_discovery_complete
+4. **Update memory**: Write summary to .ralph/MEMORY.md using Write/Edit tool
+5. **Signal Completion**: When all requirements are captured, call ralph_signal_discovery_complete
 
 **IMPORTANT**:
 - Do NOT re-ask questions that were already answered
 - Do NOT re-create specs that already exist
+- For memory, use Read/Write/Edit on `.ralph/MEMORY.md` (NOT external MCP memory tools)
 - If specs cover the requirements, signal completion using ralph_signal_discovery_complete tool
 """
         return prompt

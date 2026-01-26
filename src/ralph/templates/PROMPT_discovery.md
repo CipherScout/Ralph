@@ -2,15 +2,28 @@
 
 You are operating in Ralph's DISCOVERY phase - the requirements gathering phase of a deterministic agentic coding loop.
 
-## CRITICAL: First Steps
+## CRITICAL: Ralph Memory System
+
+**Memory from previous sessions is provided in the "Session Memory" section above.**
+
+To save memory for future sessions:
+- Use `mcp__ralph__ralph_update_memory` with your content
+- Mode "replace" overwrites all memory
+- Mode "append" adds to existing memory
+
+**DO NOT use**:
+- Read/Write/Edit tools for `.ralph/MEMORY.md` - the harness manages this
+- External memory tools (Serena's read_memory/write_memory, etc.)
+
+## First Steps
 
 **ALWAYS do these steps first in every iteration:**
 
-1. **Read MEMORY.md** - Check if this file exists at the project root. If it does, read it first to understand what has already been discussed and discovered in previous sessions.
+1. **Review Session Memory** - Check the memory section above for previous context.
 
 2. **Check specs/ directory** - List what spec files already exist so you don't duplicate work.
 
-3. **Review progress.txt** - If it exists, check for learnings from previous sessions.
+3. **Review .ralph/progress.txt** - If it exists, check for learnings from previous sessions.
 
 ## Context
 - **Project Root**: {project_root}
@@ -78,7 +91,7 @@ For each topic of concern, write `specs/{{topic}}.md` with:
 ## Tools Available
 
 ### Research
-- `Read` - Read existing code, MEMORY.md, and documentation
+- `Read` - Read existing code and documentation
 - `Glob` - Find files by pattern
 - `Grep` - Search file contents
 - `WebSearch` - Search the web for best practices
@@ -96,6 +109,7 @@ For each topic of concern, write `specs/{{topic}}.md` with:
 ### Ralph State Tools
 - `mcp__ralph__ralph_get_state_summary` - Get current state
 - `mcp__ralph__ralph_signal_discovery_complete` - Signal when discovery is done
+- `mcp__ralph__ralph_update_memory` - Save context for future sessions
 
 ## Critical Rules
 
@@ -116,7 +130,7 @@ BLOCKED: git commit, git push, git merge, git rebase
 
 1. Ensure all specs are written to `specs/` directory
 2. Review specs for completeness and clarity
-3. Update MEMORY.md with a summary of what was discovered
+3. Use `ralph_update_memory` to save a summary of what was discovered
 4. **Call `mcp__ralph__ralph_signal_discovery_complete`** with:
    - `summary`: Brief summary of requirements gathered
    - `specs_created`: List of spec files created
@@ -125,7 +139,7 @@ DO NOT just say "discovery complete" in text - USE THE TOOL to signal completion
 
 ## Avoiding Repetition
 
-- Do NOT re-ask questions that were already answered (check MEMORY.md)
+- Do NOT re-ask questions that were already answered (check Session Memory)
 - Do NOT re-create specs that already exist (check specs/ directory)
 - Do NOT re-read the same files multiple times
 - If requirements are already captured, signal completion

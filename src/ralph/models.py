@@ -319,6 +319,10 @@ class RalphState:
     # Dict mapping phase name to completion info
     completion_signals: dict[str, dict[str, Any]] = field(default_factory=dict)
 
+    # Pending memory update (queued by ralph_update_memory tool)
+    # Written to .ralph/MEMORY.md at end of iteration
+    pending_memory_update: dict[str, Any] | None = None
+
     def is_phase_complete(self, phase: str) -> bool:
         """Check if a phase has been signaled as complete."""
         return phase in self.completion_signals and self.completion_signals[phase].get(

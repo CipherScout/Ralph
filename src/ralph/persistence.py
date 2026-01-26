@@ -29,6 +29,7 @@ T = TypeVar("T")
 # Default paths relative to project root
 STATE_FILE = ".ralph/state.json"
 PLAN_FILE = ".ralph/implementation_plan.json"
+MEMORY_FILE = ".ralph/MEMORY.md"
 
 
 class PersistenceError(Exception):
@@ -161,6 +162,7 @@ def _deserialize_ralph_state(data: dict[str, Any]) -> RalphState:
         tasks_completed_this_session=data.get("tasks_completed_this_session", 0),
         paused=data.get("paused", False),
         completion_signals=data.get("completion_signals", {}),
+        pending_memory_update=data.get("pending_memory_update"),
     )
 
 
@@ -358,3 +360,39 @@ def initialize_plan(project_root: Path) -> ImplementationPlan:
     plan = ImplementationPlan()
     save_plan(plan, project_root)
     return plan
+
+
+def load_memory(project_root: Path) -> str | None:
+    """Load memory content from .ralph/MEMORY.md.
+
+    Args:
+        project_root: Path to the project root
+
+    Returns:
+        Memory content if file exists, None otherwise
+    """
+    memory_path = project_root / MEMORY_FILE
+    if memory_path.exists():
+        return memory_path.read_text()
+    return None
+
+
+def save_memory(content: str, project_root: Path) -> Path:
+    """Save memory content to .ralph/MEMORY.md.
+
+    Args:
+        content: Memory content to save
+        project_root: Path to the project root
+
+    Returns:
+        Path to the saved memory file
+    """
+    ensure_ralph_dir(project_root)
+    memory_path = project_root / MEMORY_FILE
+    memory_path.write_text(content)
+    return memory_path
+
+
+def memory_exists(project_root: Path) -> bool:
+    """Check if memory file exists."""
+    return (project_root / MEMORY_FILE).exists()

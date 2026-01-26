@@ -85,8 +85,10 @@ class TestLoadMemoryFile:
         assert result is None
 
     def test_loads_existing_memory(self, project_path: Path) -> None:
-        """Loads existing MEMORY.md content."""
-        memory_path = project_path / "MEMORY.md"
+        """Loads existing .ralph/MEMORY.md content."""
+        ralph_dir = project_path / ".ralph"
+        ralph_dir.mkdir(parents=True, exist_ok=True)
+        memory_path = ralph_dir / "MEMORY.md"
         memory_path.write_text("# Session Memory\n\nTest content")
 
         result = load_memory_file(project_path)

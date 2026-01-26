@@ -143,6 +143,8 @@ class RalphLiveDisplay:
             if self.verbosity >= 2 and event.text:
                 self._stop_spinner()
                 self.console.print(event.text, end="")
+                # Restart spinner - will be stopped again if more text or tool call
+                self._start_spinner()
 
         elif event.type == StreamEventType.TOOL_USE_START:
             # Stop spinner to show tool info

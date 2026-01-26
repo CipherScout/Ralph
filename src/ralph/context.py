@@ -82,7 +82,7 @@ class IterationContext:
 
 
 def load_memory_file(project_root: Path) -> str | None:
-    """Load MEMORY.md content if it exists.
+    """Load .ralph/MEMORY.md content if it exists.
 
     Args:
         project_root: Path to project root
@@ -90,7 +90,7 @@ def load_memory_file(project_root: Path) -> str | None:
     Returns:
         Memory content or None if file doesn't exist
     """
-    memory_path = project_root / "MEMORY.md"
+    memory_path = project_root / ".ralph" / "MEMORY.md"
     if memory_path.exists():
         return memory_path.read_text()
     return None
@@ -371,7 +371,7 @@ def generate_memory_content(
 
 
 def write_memory_file(content: str, project_root: Path) -> Path:
-    """Write MEMORY.md file.
+    """Write .ralph/MEMORY.md file.
 
     Args:
         content: Memory content to write
@@ -380,7 +380,9 @@ def write_memory_file(content: str, project_root: Path) -> Path:
     Returns:
         Path to written file
     """
-    memory_path = project_root / "MEMORY.md"
+    ralph_dir = project_root / ".ralph"
+    ralph_dir.mkdir(parents=True, exist_ok=True)
+    memory_path = ralph_dir / "MEMORY.md"
     memory_path.write_text(content)
     return memory_path
 

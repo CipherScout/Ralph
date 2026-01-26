@@ -7,9 +7,11 @@ import pytest
 from ralph.mcp_tools import (
     MAX_DESCRIPTION_LENGTH,
     MAX_LEARNING_LENGTH,
+    MAX_MEMORY_CONTENT_LENGTH,
     MAX_TASK_ID_LENGTH,
     RALPH_MCP_TOOLS,
     VALID_CATEGORIES,
+    VALID_MEMORY_MODES,
     ValidationError,
     _format_result,
     _validate_category,
@@ -28,6 +30,7 @@ from ralph.mcp_tools import (
     ralph_mark_task_blocked,
     ralph_mark_task_complete,
     ralph_mark_task_in_progress,
+    ralph_update_memory,
 )
 from ralph.tools import ToolResult
 
@@ -610,6 +613,7 @@ class TestGetRalphToolNames:
         assert "mcp__ralph__ralph_get_state_summary" in names
         assert "mcp__ralph__ralph_add_task" in names
         assert "mcp__ralph__ralph_increment_retry" in names
+        assert "mcp__ralph__ralph_update_memory" in names
 
     def test_respects_custom_server_name(self) -> None:
         """Respects custom server name."""
@@ -623,8 +627,8 @@ class TestRalphMcpToolsConstant:
 
     def test_has_expected_count(self) -> None:
         """Has expected number of tools."""
-        # 9 original tools + 4 phase completion signal tools
-        assert len(RALPH_MCP_TOOLS) == 13
+        # 9 original tools + 4 phase completion signal tools + 1 memory tool
+        assert len(RALPH_MCP_TOOLS) == 14
 
     def test_all_have_handler(self) -> None:
         """All tools have callable handler."""
@@ -658,3 +662,135 @@ class TestValidationConstants:
     def test_pattern_is_valid_category(self) -> None:
         """Pattern is a valid category."""
         assert "pattern" in VALID_CATEGORIES
+
+
+class TestRalphUpdateMemory:
+    """Tests for ralph_update_memory tool."""
+
+    @pytest.mark.asyncio
+    async def test_valid_replace_mode(self) -> None:
+        """Replace mode updates memory successfully."""
+        mock_tools = MagicMock()
+        mock_tools.update_memory.return_value = ToolResult(
+            success=True,
+            content="Memory update queued (replace mode, 100 chars)",
+            data={"mode": "replace", "length": 100, "queued": True},
+        )
+
+        with patch("ralph.mcp_tools._ralph_tools", mock_tools):
+            result = await ralph_update_memory.handler(
+                {"content": "New memory content", "mode": "replace"}
+            )
+
+        assert "content" in result
+        assert "is_error" not in result
+        mock_tools.update_memory.assert_called_once_with(
+            content="New memory content", mode="replace"
+        )
+
+    @pytest.mark.asyncio
+    async def test_valid_append_mode(self) -> None:
+        """Append mode updates memory successfully."""
+        mock_tools = MagicMock()
+        mock_tools.update_memory.return_value = ToolResult(
+            success=True,
+            content="Memory update queued (append mode, 50 chars)",
+            data={"mode": "append", "length": 50, "queued": True},
+        )
+
+        with patch("ralph.mcp_tools._ralph_tools", mock_tools):
+            result = await ralph_update_memory.handler(
+                {"content": "Additional memory", "mode": "append"}
+            )
+
+        assert "content" in result
+        assert "is_error" not in result
+        mock_tools.update_memory.assert_called_once_with(
+            content="Additional memory", mode="append"
+        )
+
+    @pytest.mark.asyncio
+    async def test_content_length_limit(self) -> None:
+        """Content exceeding limit is rejected."""
+        long_content = "a" * (MAX_MEMORY_CONTENT_LENGTH + 1)
+        result = await ralph_update_memory.handler(
+            {"content": long_content, "mode": "replace"}
+        )
+        assert "is_error" in result
+        assert "too long" in result["content"][0]["text"].lower()
+
+    @pytest.mark.asyncio
+    async def test_invalid_mode_rejected(self) -> None:
+        """Invalid mode values are rejected."""
+        result = await ralph_update_memory.handler(
+            {"content": "Some content", "mode": "invalid"}
+        )
+        assert "is_error" in result
+        assert "must be one of" in result["content"][0]["text"].lower()
+
+    @pytest.mark.asyncio
+    async def test_empty_content_rejected(self) -> None:
+        """Empty content is rejected."""
+        result = await ralph_update_memory.handler(
+            {"content": "", "mode": "append"}
+        )
+        assert "is_error" in result
+        assert "cannot be empty" in result["content"][0]["text"].lower()
+
+    @pytest.mark.asyncio
+    async def test_whitespace_only_content_rejected(self) -> None:
+        """Whitespace-only content is rejected."""
+        result = await ralph_update_memory.handler(
+            {"content": "   ", "mode": "append"}
+        )
+        assert "is_error" in result
+        assert "cannot be empty" in result["content"][0]["text"].lower()
+
+    @pytest.mark.asyncio
+    async def test_non_string_content_rejected(self) -> None:
+        """Non-string content is rejected."""
+        result = await ralph_update_memory.handler(
+            {"content": 123, "mode": "append"}
+        )
+        assert "is_error" in result
+        assert "must be a string" in result["content"][0]["text"].lower()
+
+    @pytest.mark.asyncio
+    async def test_max_length_content_accepted(self) -> None:
+        """Content at max length is accepted."""
+        mock_tools = MagicMock()
+        mock_tools.update_memory.return_value = ToolResult(
+            success=True,
+            content=f"Memory update queued (replace mode, {MAX_MEMORY_CONTENT_LENGTH} chars)",
+            data={"mode": "replace", "length": MAX_MEMORY_CONTENT_LENGTH, "queued": True},
+        )
+
+        max_content = "a" * MAX_MEMORY_CONTENT_LENGTH
+        with patch("ralph.mcp_tools._ralph_tools", mock_tools):
+            result = await ralph_update_memory.handler(
+                {"content": max_content, "mode": "replace"}
+            )
+
+        assert "content" in result
+        assert "is_error" not in result
+
+
+class TestMemoryConstants:
+    """Tests for memory-related constants."""
+
+    def test_memory_content_max_length_reasonable(self) -> None:
+        """Memory content max length is reasonable."""
+        assert MAX_MEMORY_CONTENT_LENGTH >= 1000
+        assert MAX_MEMORY_CONTENT_LENGTH <= 100_000
+
+    def test_valid_memory_modes_not_empty(self) -> None:
+        """Valid memory modes set is not empty."""
+        assert len(VALID_MEMORY_MODES) > 0
+
+    def test_append_is_valid_mode(self) -> None:
+        """Append is a valid memory mode."""
+        assert "append" in VALID_MEMORY_MODES
+
+    def test_replace_is_valid_mode(self) -> None:
+        """Replace is a valid memory mode."""
+        assert "replace" in VALID_MEMORY_MODES

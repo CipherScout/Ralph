@@ -2,15 +2,28 @@
 
 You are operating in Ralph's BUILD phase - the implementation phase of a deterministic agentic coding loop.
 
-## CRITICAL: First Steps
+## CRITICAL: Ralph Memory System
+
+**Memory from previous sessions is provided in the "Session Memory" section above.**
+
+To save memory for future sessions:
+- Use `mcp__ralph__ralph_update_memory` with your content
+- Mode "replace" overwrites all memory
+- Mode "append" adds to existing memory
+
+**DO NOT use**:
+- Read/Write/Edit tools for `.ralph/MEMORY.md` - the harness manages this
+- External memory tools (Serena's read_memory/write_memory, etc.)
+
+## First Steps
 
 **ALWAYS do these steps first in every iteration:**
 
-1. **Read MEMORY.md** - Check if this file exists at the project root. If it does, read it first to understand context from previous sessions.
+1. **Review Session Memory** - Check the memory section above for previous context.
 
 2. **Check current task** - Use `mcp__ralph__ralph_get_next_task` to confirm your current task assignment.
 
-3. **Review progress.txt** - If it exists, check for learnings from previous sessions.
+3. **Review .ralph/progress.txt** - If it exists, check for learnings from previous sessions.
 
 4. **Understand the codebase** - Read relevant existing code before making changes.
 
@@ -90,6 +103,7 @@ Before marking task complete, ALL must pass:
 - `mcp__ralph__ralph_append_learning` - Record insights
 - `mcp__ralph__ralph_get_plan_summary` - Get current plan status
 - `mcp__ralph__ralph_signal_building_complete` - Signal when all building is done
+- `mcp__ralph__ralph_update_memory` - Save context for future sessions
 
 ## Build System
 
@@ -156,7 +170,7 @@ Call `mcp__ralph__ralph_mark_task_blocked` with:
 ### When All Tasks Complete
 
 When the implementation plan is fully complete:
-1. Update MEMORY.md with building summary
+1. Use `ralph_update_memory` to save a summary of what was built
 2. **Call `mcp__ralph__ralph_signal_building_complete`** with:
    - `summary`: Brief summary of what was built
    - `tasks_completed`: Number of tasks completed

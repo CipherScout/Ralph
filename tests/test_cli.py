@@ -546,14 +546,14 @@ class TestHandoff:
         assert "not initialized" in result.stdout.lower()
 
     def test_handoff_creates_memory(self, tmp_path: Path) -> None:
-        """Test handoff creates MEMORY.md."""
+        """Test handoff creates .ralph/MEMORY.md."""
         initialize_state(tmp_path)
         initialize_plan(tmp_path)
 
         result = runner.invoke(app, ["handoff", "-p", str(tmp_path)])
         assert result.exit_code == 0
         assert "completed successfully" in result.stdout.lower()
-        assert (tmp_path / "MEMORY.md").exists()
+        assert (tmp_path / ".ralph" / "MEMORY.md").exists()
 
     def test_handoff_with_reason(self, tmp_path: Path) -> None:
         """Test handoff with custom reason."""
@@ -741,8 +741,8 @@ class TestRalphLiveDisplaySpinner:
     based on different stream events without using the real Claude Agent SDK.
     """
 
-    def test_text_delta_stops_spinner_only_when_printing(self) -> None:
-        """TEXT_DELTA should only stop spinner when verbosity >= 2 and text is present."""
+    def test_text_delta_stops_and_restarts_spinner_when_printing(self) -> None:
+        """TEXT_DELTA should stop spinner to print, then restart for continued processing."""
         from rich.console import Console
         from ralph.cli import RalphLiveDisplay
 
@@ -756,13 +756,14 @@ class TestRalphLiveDisplaySpinner:
         display._start_spinner = lambda: start_calls.append(True)
         display._stop_spinner = lambda: stop_calls.append(True)
 
-        # TEXT_DELTA with text in verbose mode should stop spinner
+        # TEXT_DELTA with text in verbose mode should stop then restart spinner
         event = StreamEvent(
             type=StreamEventType.TEXT_DELTA,
             text="Hello world",
         )
         display.handle_event(event)
         assert len(stop_calls) == 1, "Spinner should stop when printing text"
+        assert len(start_calls) == 1, "Spinner should restart after printing text"
 
     def test_text_delta_no_stop_when_low_verbosity(self) -> None:
         """TEXT_DELTA should NOT stop spinner when verbosity < 2."""

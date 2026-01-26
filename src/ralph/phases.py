@@ -242,6 +242,24 @@ def build_discovery_prompt(
 
 You are in the DISCOVERY phase of the Ralph development loop.
 
+## CRITICAL: Ralph Memory System
+
+**Memory from previous sessions is provided in the "Session Memory" section above.**
+
+To save memory for future sessions:
+- Use `mcp__ralph__ralph_update_memory` with your content
+- Mode "replace" overwrites all memory
+- Mode "append" adds to existing memory
+
+**DO NOT use**:
+- Read/Write/Edit tools for `.ralph/MEMORY.md` - the harness manages this
+- External memory tools (Serena's read_memory/write_memory, etc.)
+
+**RALPH TOOLS**: Use `mcp__ralph__*` tools for state management:
+- `mcp__ralph__ralph_get_state_summary` - Get current state
+- `mcp__ralph__ralph_signal_discovery_complete` - Signal phase completion
+- `mcp__ralph__ralph_update_memory` - Save memory for future sessions
+
 ## Your Mission
 Understand what the user wants to build by using the Jobs-to-be-Done framework.
 Ask clarifying questions to fully understand:
@@ -263,40 +281,41 @@ Ask clarifying questions to fully understand:
 """
 
     prompt += """## Your Process
-1. Read and understand the existing codebase structure
-2. Ask the user clarifying questions (up to 10 questions)
-3. Summarize the requirements in structured format
-4. Output a clear requirements document
+1. Review Session Memory above for previous context
+2. Check specs/ directory for existing requirement documents
+3. Ask the user clarifying questions (up to 10 questions)
+4. Write specification files to specs/ directory
+5. Use ralph_update_memory to save important context
+6. Signal completion with ralph_signal_discovery_complete
 
 ## Output Format
-When you have gathered enough information, output a requirements summary:
+When you have gathered enough information, write specs to the specs/ directory:
 
-```requirements
-GOAL: <one-line project goal>
+```markdown
+# {{Topic Name}}
 
-FUNCTIONAL REQUIREMENTS:
-- FR1: <requirement>
-- FR2: <requirement>
-...
+## Problem Statement
+[Clear description of what problem this solves]
 
-NON-FUNCTIONAL REQUIREMENTS:
-- NFR1: <requirement>
-...
+## Success Criteria
+- [ ] Measurable outcome 1
+- [ ] Measurable outcome 2
 
-CONSTRAINTS:
-- C1: <constraint>
-...
+## Constraints
+- What we will NOT do
+- Non-goals
 
-SUCCESS CRITERIA:
-- SC1: <criterion>
-...
+## Acceptance Criteria
+- [ ] Testable criterion 1
+- [ ] Testable criterion 2
 ```
 
 ## Important
-- Ask ONE question at a time
+- Ask ONE question at a time using AskUserQuestion tool
 - Explore edge cases and error handling
 - Understand existing code patterns before suggesting new ones
 - Do NOT write code in this phase - only gather requirements
+- When done, call ralph_signal_discovery_complete tool
 """
 
     return prompt
@@ -317,15 +336,22 @@ def build_planning_prompt(
     """
     config = config or load_config(project_root)
 
-    # Load MEMORY.md if it exists
-    memory_path = project_root / "MEMORY.md"
-    memory_content = ""
-    if memory_path.exists():
-        memory_content = memory_path.read_text()
-
     prompt = f"""# Planning Phase - Implementation Design
 
 You are in the PLANNING phase of the Ralph development loop.
+
+## CRITICAL: Ralph Memory System
+
+**Memory from previous sessions is provided in the "Session Memory" section above.**
+
+To save memory for future sessions:
+- Use `mcp__ralph__ralph_update_memory` with your content
+- Mode "replace" overwrites all memory
+- Mode "append" adds to existing memory
+
+**DO NOT use**:
+- Read/Write/Edit tools for `.ralph/MEMORY.md` - the harness manages this
+- External memory tools (Serena's read_memory/write_memory, etc.)
 
 ## Your Mission
 Create a detailed implementation plan with tasks sized for single context windows.
@@ -337,18 +363,12 @@ Each task should be completable in approximately 30 minutes of focused work.
 
 """
 
-    if memory_content:
-        prompt += f"""## Requirements from Discovery Phase
-{memory_content}
-
-"""
-
     prompt += """## Planning Process
-1. Analyze the codebase architecture
-2. Identify gaps between current state and requirements
-3. Break down work into discrete, testable tasks
-4. Map dependencies between tasks
-5. Estimate token usage for each task
+1. Review Session Memory above for discovery context
+2. Read specs/ directory for requirement documents
+3. Analyze the codebase architecture
+4. Break down work into discrete, testable tasks
+5. Use ralph_add_task to add each task to the plan
 
 ## Task Sizing Guidelines
 - Each task: ~30,000 tokens (roughly 30 min work)
@@ -357,7 +377,7 @@ Each task should be completable in approximately 30 minutes of focused work.
 - Clear verification criteria
 
 ## Output Format
-Output tasks using ralph_add_task tool:
+Use the ralph_add_task MCP tool for each task:
 
 For each task, specify:
 - id: Unique identifier (e.g., "auth-01", "api-02")
@@ -376,6 +396,7 @@ For each task, specify:
 - Consider test infrastructure setup as tasks
 - Include documentation tasks if needed
 - Do NOT implement - only plan
+- When done, call ralph_signal_planning_complete
 """
 
     return prompt
@@ -400,6 +421,14 @@ def build_building_prompt(
     prompt = f"""# Building Phase - Implementation
 
 You are in the BUILDING phase of the Ralph development loop.
+
+## CRITICAL: Ralph Memory System
+
+**Session Memory is provided above.** To save learnings for future sessions:
+- Use `mcp__ralph__ralph_update_memory` to save important context
+- Use `mcp__ralph__ralph_append_learning` for specific learnings
+
+**DO NOT use**: Read/Write/Edit for `.ralph/MEMORY.md`, or external memory tools.
 
 ## Your Mission
 Implement the current task from the implementation plan.
@@ -484,6 +513,13 @@ def build_validation_prompt(
     prompt = f"""# Validation Phase - Verification
 
 You are in the VALIDATION phase of the Ralph development loop.
+
+## CRITICAL: Ralph Memory System
+
+**Session Memory is provided above.** To save validation notes:
+- Use `mcp__ralph__ralph_update_memory` to save context for next session
+
+**DO NOT use**: Read/Write/Edit for `.ralph/MEMORY.md`, or external memory tools.
 
 ## Your Mission
 Verify that all implemented tasks meet their requirements and the overall

@@ -253,10 +253,10 @@ class TestBuildDiscoveryPrompt:
         assert "Build a CLI tool" in prompt
 
     def test_includes_output_format(self, project_path: Path) -> None:
-        """Includes requirements output format."""
+        """Includes spec file output format."""
         prompt = build_discovery_prompt(project_path)
-        assert "FUNCTIONAL REQUIREMENTS" in prompt
-        assert "NON-FUNCTIONAL REQUIREMENTS" in prompt
+        assert "Success Criteria" in prompt
+        assert "Acceptance Criteria" in prompt
 
 
 class TestBuildPlanningPrompt:
@@ -277,13 +277,14 @@ class TestBuildPlanningPrompt:
         prompt = build_planning_prompt(project_path)
         assert "dependencies" in prompt.lower()
 
-    def test_includes_memory_content(self, project_path: Path) -> None:
-        """Includes MEMORY.md content if present."""
-        memory_path = project_path / "MEMORY.md"
-        memory_path.write_text("# Requirements\n\nTest requirements here")
-
+    def test_includes_memory_instructions(self, project_path: Path) -> None:
+        """Includes memory system instructions."""
+        # Note: Actual memory content is now injected by the executor layer
+        # via _inject_memory_into_prompt(), not by the prompt builder.
+        # This test verifies the prompt mentions the memory system.
         prompt = build_planning_prompt(project_path)
-        assert "Test requirements here" in prompt
+        assert "Session Memory" in prompt
+        assert "ralph_update_memory" in prompt
 
 
 class TestBuildBuildingPrompt:
