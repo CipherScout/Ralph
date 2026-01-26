@@ -1072,16 +1072,15 @@ def run(
 def discover(
     project_root: str = typer.Option(".", "--project-root", "-p", help="Project root directory"),
     goal: str = typer.Option(None, "--goal", "-g", help="Project goal"),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output (show LLM text)"),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Quiet output (errors only)"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Quiet output (hide LLM text)"),
 ) -> None:
     """Run the Discovery phase with JTBD framework.
 
     This command runs interactively, asking questions to clarify requirements
     and creating specification files in the specs/ directory.
 
-    Use --verbose to see the full LLM output as it streams.
-    Use --quiet to suppress all output except errors.
+    By default, shows full LLM output as it streams.
+    Use --quiet to hide LLM text and show only tool calls and summaries.
     """
     try:
         path = _resolve_project_root(project_root)
@@ -1093,8 +1092,8 @@ def discover(
         console.print(f"[yellow]Ralph not initialized in {path}[/yellow]")
         raise typer.Exit(1)
 
-    # Determine verbosity level
-    verbosity = 0 if quiet else (2 if verbose else 1)
+    # Determine verbosity level: default is verbose (2), --quiet gives normal (1)
+    verbosity = 1 if quiet else 2
 
     async def run_streaming_discovery() -> bool:
         """Run discovery with streaming output."""
@@ -1160,16 +1159,15 @@ def discover(
 @app.command()
 def plan(
     project_root: str = typer.Option(".", "--project-root", "-p", help="Project root directory"),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output (show LLM text)"),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Quiet output (errors only)"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Quiet output (hide LLM text)"),
 ) -> None:
     """Run the Planning phase with gap analysis.
 
     This command analyzes specs and creates an implementation plan with
     sized, prioritized tasks.
 
-    Use --verbose to see the full LLM output as it streams.
-    Use --quiet to suppress all output except errors.
+    By default, shows full LLM output as it streams.
+    Use --quiet to hide LLM text and show only tool calls and summaries.
     """
     try:
         path = _resolve_project_root(project_root)
@@ -1181,8 +1179,8 @@ def plan(
         console.print(f"[yellow]Ralph not initialized in {path}[/yellow]")
         raise typer.Exit(1)
 
-    # Determine verbosity level
-    verbosity = 0 if quiet else (2 if verbose else 1)
+    # Determine verbosity level: default is verbose (2), --quiet gives normal (1)
+    verbosity = 1 if quiet else 2
 
     async def run_streaming_planning() -> bool:
         """Run planning with streaming output."""
@@ -1246,16 +1244,15 @@ def plan(
 def build(
     project_root: str = typer.Option(".", "--project-root", "-p", help="Project root directory"),
     task_id: str = typer.Option(None, "--task", "-t", help="Specific task to work on"),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output (show LLM text)"),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Quiet output (errors only)"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Quiet output (hide LLM text)"),
 ) -> None:
     """Run the Building phase with iterative task execution.
 
     This command implements tasks from the plan using TDD and backpressure.
     It can target a specific task with --task or work through all pending tasks.
 
-    Use --verbose to see the full LLM output as it streams.
-    Use --quiet to suppress all output except errors.
+    By default, shows full LLM output as it streams.
+    Use --quiet to hide LLM text and show only tool calls and summaries.
     """
     try:
         path = _resolve_project_root(project_root)
@@ -1267,8 +1264,8 @@ def build(
         console.print(f"[yellow]Ralph not initialized in {path}[/yellow]")
         raise typer.Exit(1)
 
-    # Determine verbosity level
-    verbosity = 0 if quiet else (2 if verbose else 1)
+    # Determine verbosity level: default is verbose (2), --quiet gives normal (1)
+    verbosity = 1 if quiet else 2
 
     async def run_streaming_building() -> bool:
         """Run building with streaming output."""
@@ -1329,8 +1326,7 @@ def build(
 @app.command()
 def validate(
     project_root: str = typer.Option(".", "--project-root", "-p", help="Project root directory"),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output (show LLM text)"),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Quiet output (errors only)"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Quiet output (hide LLM text)"),
 ) -> None:
     """Run the Validation phase with verification.
 
@@ -1338,8 +1334,8 @@ def validate(
     type checking, and spec compliance. It may require human approval
     if configured.
 
-    Use --verbose to see the full LLM output as it streams.
-    Use --quiet to suppress all output except errors.
+    By default, shows full LLM output as it streams.
+    Use --quiet to hide LLM text and show only tool calls and summaries.
     """
     try:
         path = _resolve_project_root(project_root)
@@ -1351,8 +1347,8 @@ def validate(
         console.print(f"[yellow]Ralph not initialized in {path}[/yellow]")
         raise typer.Exit(1)
 
-    # Determine verbosity level
-    verbosity = 0 if quiet else (2 if verbose else 1)
+    # Determine verbosity level: default is verbose (2), --quiet gives normal (1)
+    verbosity = 1 if quiet else 2
 
     async def run_streaming_validation() -> bool:
         """Run validation with streaming output."""

@@ -14,7 +14,8 @@
       "Bash(tree:*)",
       "Bash(uv run ralph-agent:*)",
       "mcp__plugin_serena_serena__read_file",
-      "mcp__plugin_serena_serena__think_about_collected_information"
+      "mcp__plugin_serena_serena__think_about_collected_information",
+      "Bash(python -m pytest tests/ -v --tb=short)"
     ]
   }
 }

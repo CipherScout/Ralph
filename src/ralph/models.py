@@ -258,6 +258,13 @@ class ContextBudget:
         """Remaining tokens before effective capacity."""
         return max(0, self.effective_capacity - self.current_usage)
 
+    @property
+    def usage_percentage(self) -> float:
+        """Current usage as a percentage of total capacity."""
+        if self.total_capacity <= 0:
+            return 0.0
+        return (self.current_usage / self.total_capacity) * 100
+
     def should_handoff(self) -> bool:
         """Check if context hand-off is needed."""
         return self.current_usage >= self.smart_zone_max
