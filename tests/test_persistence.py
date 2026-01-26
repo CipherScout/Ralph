@@ -459,3 +459,80 @@ class TestEdgeCases:
         temp_project.mkdir(parents=True)
         save_state(sample_state)  # No project_root override
         assert state_exists(temp_project)
+
+
+class TestCompletionSignalsPersistence:
+    """Tests for completion signals persistence."""
+
+    def test_completion_signals_round_trip(self, temp_project: Path) -> None:
+        """completion_signals are preserved through save/load cycle."""
+        temp_project.mkdir(parents=True)
+        state = RalphState(project_root=temp_project)
+        state.completion_signals["discovery"] = {
+            "complete": True,
+            "summary": "Discovery complete with 3 specs",
+            "timestamp": "2026-01-27T12:00:00",
+            "artifacts": {"specs_created": ["spec1.md", "spec2.md"]},
+        }
+        state.completion_signals["planning"] = {
+            "complete": True,
+            "summary": "Created 10 tasks",
+            "timestamp": "2026-01-27T12:30:00",
+            "artifacts": {"task_count": 10},
+        }
+
+        save_state(state, temp_project)
+        loaded = load_state(temp_project)
+
+        assert loaded.is_phase_complete("discovery")
+        assert loaded.is_phase_complete("planning")
+        assert not loaded.is_phase_complete("building")
+        assert loaded.completion_signals["discovery"]["summary"] == "Discovery complete with 3 specs"
+        assert loaded.completion_signals["planning"]["artifacts"]["task_count"] == 10
+
+    def test_missing_completion_signals_defaults_to_empty(self, temp_project: Path) -> None:
+        """Missing completion_signals in old state files defaults to empty dict."""
+        temp_project.mkdir(parents=True)
+        ralph_dir = temp_project / ".ralph"
+        ralph_dir.mkdir()
+
+        # Write state without completion_signals (simulating old format)
+        state_file = ralph_dir / "state.json"
+        state_file.write_text('{"project_root": "' + str(temp_project) + '"}')
+
+        loaded = load_state(temp_project)
+        assert loaded.completion_signals == {}
+        assert not loaded.is_phase_complete("discovery")
+
+    def test_empty_completion_signals_preserved(self, temp_project: Path) -> None:
+        """Empty completion_signals dict is preserved correctly."""
+        temp_project.mkdir(parents=True)
+        state = RalphState(project_root=temp_project)
+        # completion_signals starts empty by default
+
+        save_state(state, temp_project)
+        loaded = load_state(temp_project)
+
+        assert loaded.completion_signals == {}
+
+    def test_completion_signal_cleared_after_reload(self, temp_project: Path) -> None:
+        """Completion signal can be set, saved, reloaded, cleared, and saved again."""
+        temp_project.mkdir(parents=True)
+        state = RalphState(project_root=temp_project)
+
+        # Set signal
+        state.completion_signals["discovery"] = {"complete": True, "summary": "Done"}
+        save_state(state, temp_project)
+
+        # Reload and verify
+        loaded = load_state(temp_project)
+        assert loaded.is_phase_complete("discovery")
+
+        # Clear signal
+        loaded.clear_phase_completion("discovery")
+        save_state(loaded, temp_project)
+
+        # Reload and verify cleared
+        reloaded = load_state(temp_project)
+        assert not reloaded.is_phase_complete("discovery")
+        assert "discovery" not in reloaded.completion_signals

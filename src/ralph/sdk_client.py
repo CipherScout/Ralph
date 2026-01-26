@@ -7,11 +7,15 @@ Ralph's phase-based architecture, tool allocation, and safety hooks.
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.prompt import Prompt
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -69,76 +73,129 @@ def _get_ralph_hooks(state: RalphState, config: Any | None = None) -> dict[str, 
     return get_ralph_hooks(state, max_cost_per_iteration=max_cost)
 
 
-async def _handle_ask_user_question(
-    input_data: dict[str, Any],
-) -> PermissionResultAllow:
-    """Handle AskUserQuestion tool by displaying questions and collecting answers.
+@dataclass
+class UserInputCallbacks:
+    """Callbacks for user input handling, enabling CLI integration.
 
-    This follows the SDK's documented pattern for handling user input tools.
-    The answers are returned via updated_input so Claude receives them.
+    These callbacks allow the CLI display layer to properly manage spinner
+    state when the SDK needs user input (e.g., for AskUserQuestion tool).
+
+    Attributes:
+        on_question_start: Called before displaying questions (stop spinner)
+        on_question_end: Called after collecting answers (restart spinner)
+        console: Shared Rich Console instance for display
     """
-    from rich.console import Console
-    from rich.panel import Panel
-    from rich.prompt import Prompt
 
-    console = Console()
-    answers: dict[str, str] = {}
+    on_question_start: Callable[[], None] | None = None
+    on_question_end: Callable[[], None] | None = None
+    console: Console | None = None
 
-    questions = input_data.get("questions", [])
-    for q in questions:
-        header = q.get("header", "Question")
-        question_text = q.get("question", "Please answer:")
-        options = q.get("options", [])
-        multi_select = q.get("multiSelect", False)
 
-        # Display question with Rich formatting
-        console.print()
-        console.print(
-            Panel(
-                question_text,
-                title=f"[bold yellow]{header}[/bold yellow]",
-                border_style="yellow",
-            )
-        )
+def _create_ask_user_handler(
+    callbacks: UserInputCallbacks | None = None,
+) -> Callable[[dict[str, Any]], Any]:
+    """Create an AskUserQuestion handler with optional UI callbacks.
 
-        # Display options
-        for i, opt in enumerate(options, 1):
-            if isinstance(opt, dict):
-                label = opt.get("label", str(opt))
-                desc = opt.get("description", "")
-                if desc:
-                    console.print(f"  {i}. {label} [dim]- {desc}[/dim]")
+    This factory creates a handler that integrates with the CLI's spinner
+    lifecycle. When callbacks are provided, it will:
+    1. Call on_question_start before displaying questions (to stop spinner)
+    2. Display questions and collect user input
+    3. Call on_question_end after collecting all answers (to restart spinner)
+
+    Args:
+        callbacks: Optional UI callbacks for spinner control
+
+    Returns:
+        An async function suitable for use as a can_use_tool callback
+    """
+
+    async def _handle_ask_user_question(
+        input_data: dict[str, Any],
+    ) -> PermissionResultAllow:
+        """Handle AskUserQuestion tool by displaying questions and collecting answers."""
+        # Use provided console or create new one
+        console = callbacks.console if callbacks and callbacks.console else Console()
+
+        # Signal question start (e.g., stop spinner)
+        if callbacks and callbacks.on_question_start:
+            callbacks.on_question_start()
+
+        try:
+            answers: dict[str, str] = {}
+
+            questions = input_data.get("questions", [])
+            for q in questions:
+                header = q.get("header", "Question")
+                question_text = q.get("question", "Please answer:")
+                options = q.get("options", [])
+                multi_select = q.get("multiSelect", False)
+
+                # Display question with Rich formatting
+                console.print()
+                console.print(
+                    Panel(
+                        question_text,
+                        title=f"[bold yellow]{header}[/bold yellow]",
+                        border_style="yellow",
+                    )
+                )
+
+                # Display options
+                for i, opt in enumerate(options, 1):
+                    if isinstance(opt, dict):
+                        label = opt.get("label", str(opt))
+                        desc = opt.get("description", "")
+                        if desc:
+                            console.print(f"  {i}. {label} [dim]- {desc}[/dim]")
+                        else:
+                            console.print(f"  {i}. {label}")
+                    else:
+                        console.print(f"  {i}. {opt}")
+
+                # Show input hint
+                if multi_select:
+                    console.print(
+                        "  [dim](Enter numbers separated by commas, or type your own)[/dim]"
+                    )
                 else:
-                    console.print(f"  {i}. {label}")
-            else:
-                console.print(f"  {i}. {opt}")
+                    console.print(
+                        "  [dim](Enter a number, or type your own answer)[/dim]"
+                    )
 
-        # Show input hint
-        if multi_select:
-            console.print("  [dim](Enter numbers separated by commas, or type your own)[/dim]")
-        else:
-            console.print("  [dim](Enter a number, or type your own answer)[/dim]")
+                # Get user response
+                response = Prompt.ask("[bold]Your answer[/bold]")
 
-        # Get user response
-        response = Prompt.ask("[bold]Your answer[/bold]")
+                # Parse response - convert number to option label if applicable
+                parsed_response = response.strip()
+                if parsed_response.isdigit():
+                    idx = int(parsed_response) - 1
+                    if 0 <= idx < len(options):
+                        opt = options[idx]
+                        parsed_response = (
+                            opt.get("label", str(opt))
+                            if isinstance(opt, dict)
+                            else str(opt)
+                        )
 
-        # Parse response - convert number to option label if applicable
-        parsed_response = response.strip()
-        if parsed_response.isdigit():
-            idx = int(parsed_response) - 1
-            if 0 <= idx < len(options):
-                opt = options[idx]
-                parsed_response = opt.get("label", str(opt)) if isinstance(opt, dict) else str(opt)
+                answers[question_text] = parsed_response
 
-        answers[question_text] = parsed_response
+            # Return with answers in updated_input so Claude receives them
+            return PermissionResultAllow(
+                updated_input={
+                    "questions": questions,
+                    "answers": answers,
+                }
+            )
+        finally:
+            # Signal question end (e.g., restart spinner) - always called
+            if callbacks and callbacks.on_question_end:
+                callbacks.on_question_end()
 
-    # Return with answers in updated_input so Claude receives them
-    return PermissionResultAllow(
-        updated_input={
-            "questions": questions,
-            "answers": answers,
-        }
-    )
+    return _handle_ask_user_question
+
+
+# Default handler without callbacks (for backwards compatibility)
+_default_ask_handler = _create_ask_user_handler(None)
 
 
 async def _default_can_use_tool(
@@ -152,7 +209,7 @@ async def _default_can_use_tool(
     For other tools, it allows them (other restrictions are handled by hooks).
     """
     if tool_name == "AskUserQuestion":
-        return await _handle_ask_user_question(input_data)
+        return await _default_ask_handler(input_data)
 
     # Allow other tools (hooks handle restrictions)
     return PermissionResultAllow()
@@ -305,6 +362,7 @@ class RalphSDKClient:
         hooks: dict[str, list[HookMatcher]] | None = None,
         mcp_servers: dict[str, Any] | None = None,
         auto_configure: bool = True,
+        user_input_callbacks: UserInputCallbacks | None = None,
     ) -> None:
         """Initialize the SDK client wrapper.
 
@@ -314,10 +372,12 @@ class RalphSDKClient:
             hooks: SDK hooks for tool validation (optional)
             mcp_servers: MCP server configurations (optional)
             auto_configure: Automatically configure hooks and MCP server (default True)
+            user_input_callbacks: Callbacks for user input handling (spinner control)
         """
         self.state = state
         self.config = config
         self._session_id: str | None = None
+        self.user_input_callbacks = user_input_callbacks
 
         # Auto-configure hooks and MCP server if not provided
         if auto_configure:
@@ -362,6 +422,23 @@ class RalphSDKClient:
         if self.config:
             max_budget_usd = self.config.cost_limits.per_iteration
 
+        # Create callback-aware AskUserQuestion handler if callbacks provided
+        if self.user_input_callbacks:
+            ask_handler = _create_ask_user_handler(self.user_input_callbacks)
+
+            async def can_use_tool(
+                tool_name: str,
+                input_data: dict[str, Any],
+                context: ToolPermissionContext,
+            ) -> PermissionResultAllow | PermissionResultDeny:
+                if tool_name == "AskUserQuestion":
+                    return await ask_handler(input_data)
+                return PermissionResultAllow()
+
+            tool_callback = can_use_tool
+        else:
+            tool_callback = _default_can_use_tool
+
         return ClaudeAgentOptions(
             allowed_tools=allowed_tools,
             system_prompt=system_prompt,
@@ -375,7 +452,7 @@ class RalphSDKClient:
             # Include user settings to inherit user's configured MCP servers
             setting_sources=["user", "project", "local"],
             resume=self._session_id,  # Resume previous session if available
-            can_use_tool=_default_can_use_tool,  # Handle AskUserQuestion
+            can_use_tool=tool_callback,  # Handle AskUserQuestion with callbacks
         )
 
     async def run_iteration(
@@ -734,6 +811,7 @@ def create_ralph_client(
     config: RalphConfig | None = None,
     hooks: dict[str, list[HookMatcher]] | None = None,
     mcp_servers: dict[str, Any] | None = None,
+    user_input_callbacks: UserInputCallbacks | None = None,
 ) -> RalphSDKClient:
     """Create a RalphSDKClient for the given state.
 
@@ -742,6 +820,7 @@ def create_ralph_client(
         config: Optional Ralph configuration
         hooks: Optional SDK hooks
         mcp_servers: Optional MCP servers
+        user_input_callbacks: Callbacks for user input handling (spinner control)
 
     Returns:
         Configured RalphSDKClient
@@ -751,4 +830,5 @@ def create_ralph_client(
         config=config,
         hooks=hooks,
         mcp_servers=mcp_servers,
+        user_input_callbacks=user_input_callbacks,
     )

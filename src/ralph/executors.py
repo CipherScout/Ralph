@@ -23,7 +23,12 @@ from ralph.events import (
 from ralph.models import ImplementationPlan, Phase, RalphState, Task
 from ralph.persistence import load_plan, load_state, save_plan, save_state
 from ralph.phases import get_phase_prompt
-from ralph.sdk_client import IterationResult, RalphSDKClient, create_ralph_client
+from ralph.sdk_client import (
+    IterationResult,
+    RalphSDKClient,
+    UserInputCallbacks,
+    create_ralph_client,
+)
 
 if TYPE_CHECKING:
     pass
@@ -58,6 +63,7 @@ class PhaseExecutor(ABC):
         project_root: Path,
         state: RalphState | None = None,
         config: RalphConfig | None = None,
+        user_input_callbacks: UserInputCallbacks | None = None,
     ) -> None:
         """Initialize executor.
 
@@ -65,12 +71,14 @@ class PhaseExecutor(ABC):
             project_root: Path to the project root
             state: Optional pre-loaded state
             config: Optional pre-loaded config
+            user_input_callbacks: Callbacks for user input handling (spinner control)
         """
         self.project_root = project_root
         self.config = config or load_config(project_root)
         self._state = state
         self._client: RalphSDKClient | None = None
         self._plan: ImplementationPlan | None = None
+        self.user_input_callbacks = user_input_callbacks
 
     @property
     def state(self) -> RalphState:
@@ -93,6 +101,7 @@ class PhaseExecutor(ABC):
             self._client = create_ralph_client(
                 state=self.state,
                 config=self.config,
+                user_input_callbacks=self.user_input_callbacks,
             )
         return self._client
 
@@ -1286,7 +1295,11 @@ If everything passes, confirm validation is complete."""
                     )
 
                 # Check for completion signal
-                if "validation complete" in result.final_text.lower():
+                self._state = None  # Force reload
+                if (
+                    self.state.is_phase_complete("validation")
+                    or "validation complete" in result.final_text.lower()
+                ):
                     validation_results["all_passed"] = True
 
                     # Human approval checkpoint if configured
@@ -1419,7 +1432,11 @@ If everything passes, confirm validation is complete."""
                         break
 
                 # Check for completion signal
-                if "validation complete" in last_final_text.lower():
+                self._state = None  # Force reload
+                if (
+                    self.state.is_phase_complete("validation")
+                    or "validation complete" in last_final_text.lower()
+                ):
                     validation_results["all_passed"] = True
                     yield info_event("Validation checks passed")
 

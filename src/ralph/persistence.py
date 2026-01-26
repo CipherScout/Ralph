@@ -160,6 +160,7 @@ def _deserialize_ralph_state(data: dict[str, Any]) -> RalphState:
         session_tokens_used=data.get("session_tokens_used", 0),
         tasks_completed_this_session=data.get("tasks_completed_this_session", 0),
         paused=data.get("paused", False),
+        completion_signals=data.get("completion_signals", {}),
     )
 
 

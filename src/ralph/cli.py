@@ -1,10 +1,15 @@
 """Ralph CLI entry point using Typer."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ralph.sdk_client import UserInputCallbacks
 
 import typer
 from rich.console import Console
@@ -349,6 +354,25 @@ class RalphLiveDisplay:
                 self._spinner.update(tokens=tokens, cost=cost)
             except Exception:
                 pass
+
+    def get_user_input_callbacks(self) -> "UserInputCallbacks":
+        """Get callbacks for SDK user input handling.
+
+        Returns callbacks that allow the SDK's AskUserQuestion handler to
+        properly integrate with the CLI's spinner lifecycle. This ensures
+        the spinner stops before showing questions and restarts after
+        collecting user input.
+
+        Returns:
+            UserInputCallbacks with spinner control functions
+        """
+        from ralph.sdk_client import UserInputCallbacks
+
+        return UserInputCallbacks(
+            on_question_start=self._stop_spinner,
+            on_question_end=self._start_spinner,
+            console=self.console,
+        )
 
     def get_summary(self) -> str:
         """Get a summary of the execution statistics.
@@ -1193,7 +1217,10 @@ def discover(
                     console.print(f"[bold]Goal:[/bold] {goal}\n")
 
             # Execute discovery phase with streaming
-            executor = DiscoveryExecutor(path)
+            # Pass UI callbacks so spinner integrates with user input
+            executor = DiscoveryExecutor(
+                path, user_input_callbacks=display.get_user_input_callbacks()
+            )
             gen = executor.stream_execution(initial_goal=goal)
 
             # Start the generator
@@ -1302,7 +1329,10 @@ def plan(
                 console.print(Panel("[bold blue]Planning Phase[/bold blue]", border_style="blue"))
 
             # Execute planning phase with streaming
-            executor = PlanningExecutor(path)
+            # Pass UI callbacks so spinner integrates with user input
+            executor = PlanningExecutor(
+                path, user_input_callbacks=display.get_user_input_callbacks()
+            )
             gen = executor.stream_execution()
 
             # Start the generator
@@ -1416,7 +1446,10 @@ def build(
                     console.print(f"[bold]Target task:[/bold] {task_id}\n")
 
             # Execute building phase with streaming
-            executor = BuildingExecutor(path)
+            # Pass UI callbacks so spinner integrates with user input
+            executor = BuildingExecutor(
+                path, user_input_callbacks=display.get_user_input_callbacks()
+            )
             gen = executor.stream_execution(target_task_id=task_id)
 
             # Start the generator
@@ -1512,7 +1545,10 @@ def validate(
                 )
 
             # Execute validation phase with streaming
-            executor = ValidationExecutor(path)
+            # Pass UI callbacks so spinner integrates with user input
+            executor = ValidationExecutor(
+                path, user_input_callbacks=display.get_user_input_callbacks()
+            )
             gen = executor.stream_execution()
 
             # Start the generator

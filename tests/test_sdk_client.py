@@ -697,3 +697,263 @@ class TestRunIterationErrorHandling:
 
         assert result.success is False
         assert "Authentication" in result.error
+
+
+class TestUserInputCallbacks:
+    """Tests for UserInputCallbacks dataclass and handler factory."""
+
+    def test_user_input_callbacks_default_values(self) -> None:
+        """UserInputCallbacks has correct default values."""
+        from ralph.sdk_client import UserInputCallbacks
+
+        callbacks = UserInputCallbacks()
+        assert callbacks.on_question_start is None
+        assert callbacks.on_question_end is None
+        assert callbacks.console is None
+
+    def test_user_input_callbacks_with_values(self) -> None:
+        """UserInputCallbacks accepts custom values."""
+        from rich.console import Console
+
+        from ralph.sdk_client import UserInputCallbacks
+
+        def start_fn() -> None:
+            pass
+
+        def end_fn() -> None:
+            pass
+
+        console = Console(quiet=True)
+
+        callbacks = UserInputCallbacks(
+            on_question_start=start_fn,
+            on_question_end=end_fn,
+            console=console,
+        )
+
+        assert callbacks.on_question_start is start_fn
+        assert callbacks.on_question_end is end_fn
+        assert callbacks.console is console
+
+    @pytest.mark.asyncio
+    async def test_create_ask_user_handler_calls_callbacks(self) -> None:
+        """Handler calls start/end callbacks around user input."""
+        from unittest.mock import patch
+
+        from rich.console import Console
+
+        from ralph.sdk_client import UserInputCallbacks, _create_ask_user_handler
+
+        start_called = False
+        end_called = False
+        call_order: list[str] = []
+
+        def on_start() -> None:
+            nonlocal start_called
+            start_called = True
+            call_order.append("start")
+
+        def on_end() -> None:
+            nonlocal end_called
+            end_called = True
+            call_order.append("end")
+
+        callbacks = UserInputCallbacks(
+            on_question_start=on_start,
+            on_question_end=on_end,
+            console=Console(quiet=True),
+        )
+
+        handler = _create_ask_user_handler(callbacks)
+
+        # Mock Prompt.ask to return immediately
+        with patch("ralph.sdk_client.Prompt.ask", return_value="test answer"):
+            result = await handler(
+                {"questions": [{"question": "Test?", "header": "Q", "options": []}]}
+            )
+
+        assert start_called, "on_question_start was not called"
+        assert end_called, "on_question_end was not called"
+        assert call_order == ["start", "end"], "Callbacks called in wrong order"
+        assert result.updated_input["answers"]["Test?"] == "test answer"
+
+    @pytest.mark.asyncio
+    async def test_create_ask_user_handler_calls_end_on_exception(self) -> None:
+        """Handler calls on_question_end even if exception occurs."""
+        from unittest.mock import patch
+
+        from rich.console import Console
+
+        from ralph.sdk_client import UserInputCallbacks, _create_ask_user_handler
+
+        end_called = False
+
+        def on_end() -> None:
+            nonlocal end_called
+            end_called = True
+
+        callbacks = UserInputCallbacks(
+            on_question_start=lambda: None,
+            on_question_end=on_end,
+            console=Console(quiet=True),
+        )
+
+        handler = _create_ask_user_handler(callbacks)
+
+        # Mock Prompt.ask to raise an exception
+        with patch("ralph.sdk_client.Prompt.ask", side_effect=KeyboardInterrupt):
+            with pytest.raises(KeyboardInterrupt):
+                await handler(
+                    {"questions": [{"question": "Test?", "header": "Q", "options": []}]}
+                )
+
+        assert end_called, "on_question_end not called after exception"
+
+    @pytest.mark.asyncio
+    async def test_create_ask_user_handler_without_callbacks(self) -> None:
+        """Handler works without callbacks (None)."""
+        from unittest.mock import patch
+
+        from ralph.sdk_client import _create_ask_user_handler
+
+        handler = _create_ask_user_handler(None)
+
+        # Should not raise even without callbacks
+        with patch("ralph.sdk_client.Prompt.ask", return_value="answer"):
+            result = await handler(
+                {"questions": [{"question": "Q?", "header": "H", "options": []}]}
+            )
+
+        assert result.updated_input["answers"]["Q?"] == "answer"
+
+    @pytest.mark.asyncio
+    async def test_create_ask_user_handler_uses_provided_console(self) -> None:
+        """Handler uses the console from callbacks."""
+        from unittest.mock import MagicMock, patch
+
+        from ralph.sdk_client import UserInputCallbacks, _create_ask_user_handler
+
+        mock_console = MagicMock()
+
+        callbacks = UserInputCallbacks(
+            console=mock_console,
+        )
+
+        handler = _create_ask_user_handler(callbacks)
+
+        with patch("ralph.sdk_client.Prompt.ask", return_value="answer"):
+            await handler(
+                {"questions": [{"question": "Q?", "header": "H", "options": []}]}
+            )
+
+        # Console.print should have been called for displaying the question
+        assert mock_console.print.called, "Console was not used"
+
+    @pytest.mark.asyncio
+    async def test_create_ask_user_handler_handles_multiple_questions(self) -> None:
+        """Handler processes multiple questions correctly."""
+        from unittest.mock import patch
+
+        from rich.console import Console
+
+        from ralph.sdk_client import UserInputCallbacks, _create_ask_user_handler
+
+        start_count = 0
+        end_count = 0
+
+        def on_start() -> None:
+            nonlocal start_count
+            start_count += 1
+
+        def on_end() -> None:
+            nonlocal end_count
+            end_count += 1
+
+        callbacks = UserInputCallbacks(
+            on_question_start=on_start,
+            on_question_end=on_end,
+            console=Console(quiet=True),
+        )
+
+        handler = _create_ask_user_handler(callbacks)
+
+        # Mock Prompt.ask to return different answers
+        with patch("ralph.sdk_client.Prompt.ask", side_effect=["answer1", "answer2"]):
+            result = await handler(
+                {
+                    "questions": [
+                        {"question": "Q1?", "header": "H1", "options": []},
+                        {"question": "Q2?", "header": "H2", "options": []},
+                    ]
+                }
+            )
+
+        # Callbacks should be called once for the entire handler, not per question
+        assert start_count == 1, "on_question_start should be called once"
+        assert end_count == 1, "on_question_end should be called once"
+        assert result.updated_input["answers"]["Q1?"] == "answer1"
+        assert result.updated_input["answers"]["Q2?"] == "answer2"
+
+
+class TestRalphSDKClientWithCallbacks:
+    """Tests for RalphSDKClient with UserInputCallbacks."""
+
+    @patch("ralph.sdk_client._get_ralph_hooks")
+    @patch("ralph.sdk_client._get_mcp_server")
+    def test_init_accepts_user_input_callbacks(
+        self, mock_mcp: MagicMock, mock_hooks: MagicMock
+    ) -> None:
+        """RalphSDKClient accepts user_input_callbacks parameter."""
+        from ralph.sdk_client import UserInputCallbacks
+
+        mock_hooks.return_value = {"PreToolUse": []}
+        mock_mcp.return_value = None
+
+        callbacks = UserInputCallbacks(
+            on_question_start=lambda: None,
+            on_question_end=lambda: None,
+        )
+
+        state = create_mock_state()
+        client = RalphSDKClient(state=state, user_input_callbacks=callbacks)
+
+        assert client.user_input_callbacks is callbacks
+
+    @patch("ralph.sdk_client._get_ralph_hooks")
+    @patch("ralph.sdk_client._get_mcp_server")
+    def test_init_without_callbacks_sets_none(
+        self, mock_mcp: MagicMock, mock_hooks: MagicMock
+    ) -> None:
+        """RalphSDKClient defaults to None for user_input_callbacks."""
+        mock_hooks.return_value = {"PreToolUse": []}
+        mock_mcp.return_value = None
+
+        state = create_mock_state()
+        client = RalphSDKClient(state=state)
+
+        assert client.user_input_callbacks is None
+
+    @patch("ralph.sdk_client._get_ralph_hooks")
+    @patch("ralph.sdk_client._get_mcp_server")
+    def test_build_options_uses_callback_aware_handler(
+        self, mock_mcp: MagicMock, mock_hooks: MagicMock
+    ) -> None:
+        """Built options use callback-aware handler for can_use_tool."""
+        from ralph.sdk_client import UserInputCallbacks
+
+        mock_hooks.return_value = {"PreToolUse": []}
+        mock_mcp.return_value = None
+
+        callbacks = UserInputCallbacks(
+            on_question_start=lambda: None,
+            on_question_end=lambda: None,
+        )
+
+        state = create_mock_state()
+        client = RalphSDKClient(state=state, user_input_callbacks=callbacks)
+        client.mcp_servers = {}
+
+        options = client._build_options()
+
+        # The can_use_tool should be set
+        assert options.can_use_tool is not None

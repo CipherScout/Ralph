@@ -459,7 +459,7 @@ class TestPhaseCommands:
         mock_executor.stream_execution = mock_stream_execution
         mock_executor_cls.return_value = mock_executor
 
-        result = runner.invoke(app, ["discover", "-p", str(tmp_path)])
+        result = runner.invoke(app, ["discover", "-p", str(tmp_path), "--no-auto"])
         assert result.exit_code == 0
         assert "discovery" in result.stdout.lower()
 
@@ -482,7 +482,7 @@ class TestPhaseCommands:
         mock_executor.stream_execution = mock_stream_execution
         mock_executor_cls.return_value = mock_executor
 
-        result = runner.invoke(app, ["plan", "-p", str(tmp_path)])
+        result = runner.invoke(app, ["plan", "-p", str(tmp_path), "--no-auto"])
         assert result.exit_code == 0
         assert "planning" in result.stdout.lower()
 
@@ -505,7 +505,7 @@ class TestPhaseCommands:
         mock_executor.stream_execution = mock_stream_execution
         mock_executor_cls.return_value = mock_executor
 
-        result = runner.invoke(app, ["build", "-p", str(tmp_path)])
+        result = runner.invoke(app, ["build", "-p", str(tmp_path), "--no-auto"])
         assert result.exit_code == 0
         assert "building" in result.stdout.lower()
 
