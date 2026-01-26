@@ -14,8 +14,8 @@ from rich.table import Table
 
 from ralph import __version__
 from ralph.animations import (
-    PatienceDisplay,
     PhaseAnimation,
+    ThinkingSpinner,
     get_random_fact,
     get_random_phrase,
     get_tool_category,
@@ -83,9 +83,10 @@ class RalphLiveDisplay:
         self._iteration_count = 0
         self._total_cost = 0.0
         self._total_tokens = 0
-        self._patience_display = PatienceDisplay(console)
+        self._spinner: ThinkingSpinner | None = None
         self._phase_animation = PhaseAnimation(console)
         self._show_fun_fact_at = 5  # Show a fun fact every N iterations
+        self._spinner_active = False
 
     def handle_event(self, event: StreamEvent) -> str | None:
         """Handle a stream event and return user input if needed.
@@ -104,17 +105,21 @@ class RalphLiveDisplay:
             self._iteration_count = event.iteration or 0
             if self.verbosity >= 1:
                 phase = event.phase or "unknown"
-                phrase = get_random_phrase(phase.lower() if phase in ["discovery", "planning", "building", "validation"] else "thinking")
                 self.console.print(
                     f"\n[bold blue]Iteration {self._iteration_count}[/bold blue] "
-                    f"[dim]({phase})[/dim] [cyan]{phrase}[/cyan]"
+                    f"[dim]({phase})[/dim]"
                 )
                 # Show a fun fact every N iterations
                 if self._iteration_count > 0 and self._iteration_count % self._show_fun_fact_at == 0:
                     fact = get_random_fact()
                     self.console.print(f"  [dim italic]Did you know? {fact}[/dim italic]")
+            # Start the animated thinking spinner
+            self._start_spinner()
 
         elif event.type == StreamEventType.ITERATION_END:
+            # Stop the spinner before showing results
+            self._stop_spinner()
+
             tokens = event.data.get("tokens_used", 0)
             cost = event.data.get("cost_usd", 0.0)
             self._total_tokens += tokens
@@ -128,31 +133,40 @@ class RalphLiveDisplay:
                 )
 
         elif event.type == StreamEventType.TEXT_DELTA:
+            # Stop spinner when text starts streaming
+            self._stop_spinner()
             self.current_text += event.text or ""
             # In verbose mode, stream text as it arrives
             if self.verbosity >= 2 and event.text:
                 self.console.print(event.text, end="")
 
         elif event.type == StreamEventType.TOOL_USE_START:
+            # Stop spinner to show tool info
+            self._stop_spinner()
+
             tool_name = event.tool_name or "unknown"
             self.tool_stack.append(tool_name)
 
             if self.verbosity >= 1:
                 # Summarize tool input for display
                 summary = self._summarize_tool_input(tool_name, event.tool_input)
-                # Get a patience phrase based on the tool category
-                category = get_tool_category(tool_name)
-                phrase = get_random_phrase(category)
                 if summary:
-                    self.console.print(f"[dim]  -> {tool_name}: {summary}[/dim] [cyan dim]{phrase}[/cyan dim]")
+                    self.console.print(f"[dim]  -> {tool_name}: {summary}[/dim]")
                 else:
-                    self.console.print(f"[dim]  -> {tool_name}[/dim] [cyan dim]{phrase}[/cyan dim]")
+                    self.console.print(f"[dim]  -> {tool_name}[/dim]")
+
+            # Start spinner while tool executes
+            self._start_spinner()
 
         elif event.type == StreamEventType.TOOL_USE_END:
+            # Stop spinner when tool completes
+            self._stop_spinner()
             if self.tool_stack:
                 self.tool_stack.pop()
 
         elif event.type == StreamEventType.NEEDS_INPUT:
+            # Stop spinner to show question
+            self._stop_spinner()
             # Display question with Rich formatting
             self.console.print()
             question_text = event.question or "Please provide input:"
@@ -299,6 +313,43 @@ class RalphLiveDisplay:
                 return json.dumps(input_data)[:80]
             return ""
 
+    def _start_spinner(self) -> None:
+        """Start the thinking spinner animation."""
+        if self._spinner_active:
+            return
+        try:
+            self._spinner = ThinkingSpinner(
+                self.console,
+                refresh_rate=0.1,
+                show_tips=self.verbosity >= 1,
+            )
+            self._spinner.start()
+            self._spinner_active = True
+        except Exception:
+            # Don't crash if spinner fails to start
+            self._spinner_active = False
+
+    def _stop_spinner(self) -> None:
+        """Stop the thinking spinner animation."""
+        if not self._spinner_active:
+            return
+        try:
+            if self._spinner:
+                self._spinner.stop()
+                self._spinner = None
+            self._spinner_active = False
+        except Exception:
+            # Don't crash if spinner fails to stop
+            self._spinner_active = False
+
+    def _update_spinner(self, tokens: int = 0, cost: float = 0.0) -> None:
+        """Update the spinner with current stats."""
+        if self._spinner and self._spinner_active:
+            try:
+                self._spinner.update(tokens=tokens, cost=cost)
+            except Exception:
+                pass
+
     def get_summary(self) -> str:
         """Get a summary of the execution statistics.
 
@@ -312,11 +363,13 @@ class RalphLiveDisplay:
 
     def reset(self) -> None:
         """Reset the display state for a new execution."""
+        self._stop_spinner()  # Ensure spinner is stopped
         self.current_text = ""
         self.tool_stack = []
         self._iteration_count = 0
         self._total_cost = 0.0
         self._total_tokens = 0
+        self._spinner_active = False
 
 
 def _resolve_project_root(project_root: str) -> Path:
@@ -1094,6 +1147,12 @@ def discover(
     project_root: str = typer.Option(".", "--project-root", "-p", help="Project root directory"),
     goal: str = typer.Option(None, "--goal", "-g", help="Project goal"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Quiet output (hide LLM text)"),
+    no_auto: bool = typer.Option(
+        False, "--no-auto", help="Disable auto-transition to next phase"
+    ),
+    auto_timeout: int = typer.Option(
+        60, "--auto-timeout", "-t", help="Seconds before auto-transition (default: 60)"
+    ),
 ) -> None:
     """Run the Discovery phase with JTBD framework.
 
@@ -1102,6 +1161,9 @@ def discover(
 
     By default, shows full LLM output as it streams.
     Use --quiet to hide LLM text and show only tool calls and summaries.
+
+    After completion, automatically transitions to Planning phase in 60 seconds.
+    Use --no-auto to disable auto-transition.
     """
     try:
         path = _resolve_project_root(project_root)
@@ -1176,11 +1238,32 @@ def discover(
     if not success:
         raise typer.Exit(1)
 
+    # Auto-transition to next phase
+    if not no_auto:
+        from ralph.transitions import prompt_phase_transition
+
+        should_continue, next_phase = asyncio.run(
+            prompt_phase_transition(console, Phase.DISCOVERY, auto_timeout)
+        )
+        if should_continue and next_phase == Phase.PLANNING:
+            plan(
+                project_root=project_root,
+                quiet=quiet,
+                no_auto=no_auto,
+                auto_timeout=auto_timeout,
+            )
+
 
 @app.command()
 def plan(
     project_root: str = typer.Option(".", "--project-root", "-p", help="Project root directory"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Quiet output (hide LLM text)"),
+    no_auto: bool = typer.Option(
+        False, "--no-auto", help="Disable auto-transition to next phase"
+    ),
+    auto_timeout: int = typer.Option(
+        60, "--auto-timeout", "-t", help="Seconds before auto-transition (default: 60)"
+    ),
 ) -> None:
     """Run the Planning phase with gap analysis.
 
@@ -1189,6 +1272,9 @@ def plan(
 
     By default, shows full LLM output as it streams.
     Use --quiet to hide LLM text and show only tool calls and summaries.
+
+    After completion, automatically transitions to Building phase in 60 seconds.
+    Use --no-auto to disable auto-transition.
     """
     try:
         path = _resolve_project_root(project_root)
@@ -1260,12 +1346,34 @@ def plan(
     if not success:
         raise typer.Exit(1)
 
+    # Auto-transition to next phase
+    if not no_auto:
+        from ralph.transitions import prompt_phase_transition
+
+        should_continue, next_phase = asyncio.run(
+            prompt_phase_transition(console, Phase.PLANNING, auto_timeout)
+        )
+        if should_continue and next_phase == Phase.BUILDING:
+            build(
+                project_root=project_root,
+                task_id=None,
+                quiet=quiet,
+                no_auto=no_auto,
+                auto_timeout=auto_timeout,
+            )
+
 
 @app.command()
 def build(
     project_root: str = typer.Option(".", "--project-root", "-p", help="Project root directory"),
     task_id: str = typer.Option(None, "--task", "-t", help="Specific task to work on"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Quiet output (hide LLM text)"),
+    no_auto: bool = typer.Option(
+        False, "--no-auto", help="Disable auto-transition to next phase"
+    ),
+    auto_timeout: int = typer.Option(
+        60, "--auto-timeout", help="Seconds before auto-transition (default: 60)"
+    ),
 ) -> None:
     """Run the Building phase with iterative task execution.
 
@@ -1274,6 +1382,9 @@ def build(
 
     By default, shows full LLM output as it streams.
     Use --quiet to hide LLM text and show only tool calls and summaries.
+
+    After completion, automatically transitions to Validation phase in 60 seconds.
+    Use --no-auto to disable auto-transition.
     """
     try:
         path = _resolve_project_root(project_root)
@@ -1343,6 +1454,19 @@ def build(
     if not success:
         raise typer.Exit(1)
 
+    # Auto-transition to next phase
+    if not no_auto:
+        from ralph.transitions import prompt_phase_transition
+
+        should_continue, next_phase = asyncio.run(
+            prompt_phase_transition(console, Phase.BUILDING, auto_timeout)
+        )
+        if should_continue and next_phase == Phase.VALIDATION:
+            validate(
+                project_root=project_root,
+                quiet=quiet,
+            )
+
 
 @app.command()
 def validate(
@@ -1357,6 +1481,8 @@ def validate(
 
     By default, shows full LLM output as it streams.
     Use --quiet to hide LLM text and show only tool calls and summaries.
+
+    This is the final phase in the workflow.
     """
     try:
         path = _resolve_project_root(project_root)
@@ -1423,6 +1549,11 @@ def validate(
     success = asyncio.run(run_streaming_validation())
     if not success:
         raise typer.Exit(1)
+
+    # Show workflow completion message (VALIDATION is the final phase)
+    from ralph.transitions import prompt_phase_transition
+
+    asyncio.run(prompt_phase_transition(console, Phase.VALIDATION, 0))
 
 
 @app.command("regenerate-plan")

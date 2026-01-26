@@ -683,12 +683,6 @@ Start by reading the specs and analyzing the codebase."""
                 if result.needs_handoff:
                     break
 
-                # Reload plan to check progress
-                self._plan = None  # Force reload
-                if self.plan.pending_count > 0:
-                    # Have tasks, may be ready to proceed
-                    break
-
             # Get final task count
             self._plan = None
             task_count = len(self.plan.tasks)
@@ -802,13 +796,6 @@ Start by reading the specs and analyzing the codebase."""
                     or "planning complete" in last_final_text.lower()
                 ):
                     yield info_event("Planning phase completion signal detected")
-                    break
-
-                # Reload plan to check progress
-                self._plan = None  # Force reload
-                if self.plan.pending_count > 0:
-                    # Have tasks, may be ready to proceed
-                    yield info_event(f"Plan has {self.plan.pending_count} tasks, ready to proceed")
                     break
 
             # Get final task count

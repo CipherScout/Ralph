@@ -432,3 +432,69 @@ class TestCreateTools:
         tools = create_tools(project_path)
         assert isinstance(tools, RalphTools)
         assert tools.project_root == project_path
+
+
+class TestSignalPhaseComplete:
+    """Tests for signal_phase_complete method."""
+
+    def test_signals_discovery_complete(self, tools: RalphTools, project_path: Path) -> None:
+        """Can signal discovery phase is complete."""
+        result = tools.signal_phase_complete(
+            phase="discovery",
+            summary="Requirements gathered",
+            artifacts={"specs_created": ["spec1.md"]},
+        )
+
+        assert result.success is True
+        assert "discovery" in result.content.lower()
+        assert result.data["phase"] == "discovery"
+        assert result.data["artifacts"] == {"specs_created": ["spec1.md"]}
+
+    def test_signals_planning_complete(self, tools: RalphTools, project_path: Path) -> None:
+        """Can signal planning phase is complete."""
+        result = tools.signal_phase_complete(
+            phase="planning",
+            summary="Plan created with 5 tasks",
+            artifacts={"task_count": 5},
+        )
+
+        assert result.success is True
+        assert "planning" in result.content.lower()
+        assert result.data["phase"] == "planning"
+
+    def test_signals_building_complete(self, tools: RalphTools, project_path: Path) -> None:
+        """Can signal building phase is complete."""
+        result = tools.signal_phase_complete(
+            phase="building",
+            summary="All tasks implemented",
+            artifacts={"tasks_completed": 5},
+        )
+
+        assert result.success is True
+        assert "building" in result.content.lower()
+
+    def test_signals_validation_complete(self, tools: RalphTools, project_path: Path) -> None:
+        """Can signal validation phase is complete."""
+        result = tools.signal_phase_complete(
+            phase="validation",
+            summary="All tests pass",
+            artifacts={"passed": True, "issues": []},
+        )
+
+        assert result.success is True
+        assert "validation" in result.content.lower()
+
+    def test_rejects_invalid_phase(self, tools: RalphTools) -> None:
+        """Rejects invalid phase names."""
+        result = tools.signal_phase_complete(
+            phase="invalid_phase",
+            summary="Test",
+        )
+
+        assert result.success is False
+        assert "invalid phase" in result.content.lower()
+
+    def test_signal_phase_complete_is_class_method(self) -> None:
+        """Verify signal_phase_complete is a method of RalphTools class."""
+        assert hasattr(RalphTools, "signal_phase_complete")
+        assert callable(getattr(RalphTools, "signal_phase_complete"))

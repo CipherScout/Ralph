@@ -530,8 +530,7 @@ class RalphTools:
                 error=str(e),
             )
 
-
-def signal_phase_complete(
+    def signal_phase_complete(
         self,
         phase: str,
         summary: str,

@@ -1,17 +1,46 @@
 """Terminal animations and patience phrases for Ralph CLI.
 
-This module provides engaging terminal animations and patience phrases
-to keep users engaged while Ralph is working on tasks.
+This module provides engaging terminal animations similar to Claude Code's
+spinner experience - an animated in-place spinner with status messages
+and token counters.
 """
 
 from __future__ import annotations
 
+import asyncio
 import random
-from typing import Any
+import sys
+import threading
+import time
+from typing import Callable
 
 from rich.console import Console
+from rich.live import Live
 from rich.spinner import Spinner
-from rich.status import Status
+from rich.style import Style
+from rich.text import Text
+
+# Claude Code style braille spinner frames (fixed-width for smooth animation)
+BRAILLE_SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+# Alternative spinners
+DOTS_SPINNER = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]
+MOON_SPINNER = ["🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘"]
+ARROW_SPINNER = ["←", "↖", "↑", "↗", "→", "↘", "↓", "↙"]
+
+# Thinking verbs (like Claude Code uses)
+THINKING_VERBS: list[str] = [
+    "Thinking",
+    "Pondering",
+    "Analyzing",
+    "Processing",
+    "Considering",
+    "Reasoning",
+    "Working",
+    "Computing",
+    "Evaluating",
+    "Synthesizing",
+]
 
 # Patience phrases organized by category
 PATIENCE_PHRASES: dict[str, list[str]] = {
@@ -101,95 +130,192 @@ PATIENCE_PHRASES: dict[str, list[str]] = {
     ],
 }
 
-# Spinner styles for different activities
-SPINNER_STYLES: dict[str, str] = {
-    "default": "dots",
-    "thinking": "dots",
-    "reading": "line",
-    "writing": "dots12",
-    "testing": "bouncingBar",
-    "planning": "dots8Bit",
-    "discovery": "aesthetic",
-    "waiting": "moon",
-}
+# Fun facts about coding to display during long waits
+CODING_FACTS: list[str] = [
+    "The first computer bug was an actual bug - a moth found in a relay.",
+    "Python was named after Monty Python, not the snake.",
+    "The first programmer was Ada Lovelace, in the 1840s.",
+    "Git was created by Linus Torvalds in just two weeks.",
+    "The term 'debugging' predates computers by centuries.",
+    "'Hello World' was first used in a 1972 C tutorial.",
+    "FORTRAN, created in 1957, is still used in scientific computing.",
+    "JavaScript was created in just 10 days.",
+    "The @ symbol was almost forgotten before email revived it.",
+    "USB was designed to be flipped in the wrong way first.",
+]
 
 
 def get_random_phrase(category: str = "thinking") -> str:
-    """Get a random patience phrase from the specified category.
-
-    Args:
-        category: The category of phrases to choose from
-
-    Returns:
-        A random phrase string
-    """
+    """Get a random patience phrase from the specified category."""
     phrases = PATIENCE_PHRASES.get(category, PATIENCE_PHRASES["waiting"])
     return random.choice(phrases)
 
 
-def get_spinner_style(category: str = "default") -> str:
-    """Get the spinner style for a category.
+def get_random_thinking_verb() -> str:
+    """Get a random thinking verb."""
+    return random.choice(THINKING_VERBS)
 
-    Args:
-        category: The activity category
 
-    Returns:
-        Spinner style name for Rich
+def get_random_fact() -> str:
+    """Get a random coding fact."""
+    return random.choice(CODING_FACTS)
+
+
+def get_tool_category(tool_name: str | None) -> str:
+    """Map a tool name to a patience phrase category."""
+    if not tool_name:
+        return "thinking"
+
+    tool_categories: dict[str, str] = {
+        "Read": "reading",
+        "Glob": "reading",
+        "Grep": "reading",
+        "Write": "writing",
+        "Edit": "writing",
+        "Bash": "testing",
+        "Task": "thinking",
+        "WebSearch": "discovery",
+        "WebFetch": "reading",
+        "AskUserQuestion": "discovery",
+    }
+
+    return tool_categories.get(tool_name, "thinking")
+
+
+class ThinkingSpinner:
+    """Claude Code-style animated spinner with token counter.
+
+    Shows an animated braille spinner that updates in-place with:
+    - Animated spinner character
+    - Thinking verb that changes periodically
+    - Token counter (if provided)
+    - Optional tip/phrase
     """
-    return SPINNER_STYLES.get(category, SPINNER_STYLES["default"])
 
-
-class PatienceDisplay:
-    """Display patience phrases with animated spinners.
-
-    This class provides context managers for showing animated
-    status messages while Ralph is working.
-    """
-
-    def __init__(self, console: Console) -> None:
-        """Initialize the patience display.
+    def __init__(
+        self,
+        console: Console,
+        refresh_rate: float = 0.1,
+        show_tips: bool = True,
+    ) -> None:
+        """Initialize the thinking spinner.
 
         Args:
-            console: Rich Console instance for output
+            console: Rich Console for output
+            refresh_rate: How often to update the animation (seconds)
+            show_tips: Whether to show patience phrases
         """
         self.console = console
-        self._status: Status | None = None
-        self._phrase_counter = 0
+        self.refresh_rate = refresh_rate
+        self.show_tips = show_tips
 
-    def start(self, category: str = "thinking") -> None:
-        """Start showing an animated patience display.
+        self._running = False
+        self._frame_index = 0
+        self._tokens = 0
+        self._cost = 0.0
+        self._verb = get_random_thinking_verb()
+        self._tip = get_random_phrase("thinking") if show_tips else ""
+        self._live: Live | None = None
+        self._last_verb_change = time.time()
+        self._verb_change_interval = 3.0  # Change verb every 3 seconds
 
-        Args:
-            category: The type of activity for phrase selection
-        """
-        phrase = get_random_phrase(category)
-        spinner_style = get_spinner_style(category)
-        self._status = self.console.status(
-            f"[cyan]{phrase}[/cyan]",
-            spinner=spinner_style,
-            spinner_style="cyan",
+    def _render(self) -> Text:
+        """Render the current spinner state."""
+        # Get current spinner frame
+        frame = BRAILLE_SPINNER[self._frame_index % len(BRAILLE_SPINNER)]
+
+        # Build the display text
+        text = Text()
+
+        # Spinner and verb
+        text.append(f" {frame} ", style="bold cyan")
+        text.append(f"{self._verb}", style="bold white")
+
+        # Token counter if we have tokens
+        if self._tokens > 0:
+            text.append(f" ({self._tokens:,} tokens", style="dim")
+            if self._cost > 0:
+                text.append(f", ${self._cost:.4f}", style="dim")
+            text.append(")", style="dim")
+        else:
+            text.append("...", style="dim")
+
+        # Tip on the same line (shortened)
+        if self.show_tips and self._tip:
+            # Truncate tip to fit
+            max_tip_len = 40
+            tip_display = self._tip[:max_tip_len] + "..." if len(self._tip) > max_tip_len else self._tip
+            text.append(f"  {tip_display}", style="dim cyan italic")
+
+        return text
+
+    def start(self) -> None:
+        """Start the animated spinner."""
+        if self._running:
+            return
+
+        self._running = True
+        self._frame_index = 0
+        self._verb = get_random_thinking_verb()
+        self._tip = get_random_phrase("thinking") if self.show_tips else ""
+        self._last_verb_change = time.time()
+
+        self._live = Live(
+            self._render(),
+            console=self.console,
+            refresh_per_second=int(1 / self.refresh_rate),
+            transient=True,  # Remove spinner when stopped
         )
-        self._status.start()
+        self._live.start()
 
-    def update(self, category: str = "thinking", custom_message: str | None = None) -> None:
-        """Update the patience display with a new phrase.
+        # Start animation thread
+        self._animation_thread = threading.Thread(target=self._animate, daemon=True)
+        self._animation_thread.start()
+
+    def _animate(self) -> None:
+        """Animation loop running in background thread."""
+        while self._running:
+            self._frame_index += 1
+
+            # Periodically change the thinking verb
+            now = time.time()
+            if now - self._last_verb_change > self._verb_change_interval:
+                self._verb = get_random_thinking_verb()
+                self._tip = get_random_phrase("thinking") if self.show_tips else ""
+                self._last_verb_change = now
+
+            # Update the display
+            if self._live:
+                self._live.update(self._render())
+
+            time.sleep(self.refresh_rate)
+
+    def update(
+        self,
+        tokens: int | None = None,
+        cost: float | None = None,
+        message: str | None = None,
+    ) -> None:
+        """Update the spinner with new information.
 
         Args:
-            category: The type of activity for phrase selection
-            custom_message: Optional custom message to display
+            tokens: Updated token count
+            cost: Updated cost
+            message: Custom message to display as tip
         """
-        if self._status:
-            if custom_message:
-                self._status.update(f"[cyan]{custom_message}[/cyan]")
-            else:
-                phrase = get_random_phrase(category)
-                self._status.update(f"[cyan]{phrase}[/cyan]")
+        if tokens is not None:
+            self._tokens = tokens
+        if cost is not None:
+            self._cost = cost
+        if message is not None:
+            self._tip = message
 
     def stop(self) -> None:
-        """Stop the patience display."""
-        if self._status:
-            self._status.stop()
-            self._status = None
+        """Stop the spinner animation."""
+        self._running = False
+        if self._live:
+            self._live.stop()
+            self._live = None
 
 
 class PhaseAnimation:
@@ -233,71 +359,44 @@ class PhaseAnimation:
     }
 
     def __init__(self, console: Console) -> None:
-        """Initialize phase animation display.
-
-        Args:
-            console: Rich Console instance
-        """
+        """Initialize phase animation display."""
         self.console = console
 
     def show_phase_banner(self, phase: str) -> None:
-        """Show an animated banner for phase transition.
-
-        Args:
-            phase: The phase name (discovery, planning, building, validation)
-        """
+        """Show an animated banner for phase transition."""
         phase_lower = phase.lower()
         art = self.PHASE_ART.get(phase_lower, f"[bold]{phase} Phase[/bold]")
         self.console.print(art)
 
 
-def get_tool_category(tool_name: str | None) -> str:
-    """Map a tool name to a patience phrase category.
+# Legacy compatibility - PatienceDisplay wraps ThinkingSpinner
+class PatienceDisplay:
+    """Display patience phrases with animated spinners.
 
-    Args:
-        tool_name: The name of the tool being used
-
-    Returns:
-        Category string for phrase selection
+    This is a compatibility wrapper around ThinkingSpinner.
     """
-    if not tool_name:
-        return "thinking"
 
-    tool_categories: dict[str, str] = {
-        "Read": "reading",
-        "Glob": "reading",
-        "Grep": "reading",
-        "Write": "writing",
-        "Edit": "writing",
-        "Bash": "testing",
-        "Task": "thinking",
-        "WebSearch": "discovery",
-        "WebFetch": "reading",
-        "AskUserQuestion": "discovery",
-    }
+    def __init__(self, console: Console) -> None:
+        """Initialize the patience display."""
+        self.console = console
+        self._spinner: ThinkingSpinner | None = None
 
-    return tool_categories.get(tool_name, "thinking")
+    def start(self, category: str = "thinking") -> None:
+        """Start showing an animated patience display."""
+        self._spinner = ThinkingSpinner(self.console, show_tips=True)
+        self._spinner._tip = get_random_phrase(category)
+        self._spinner.start()
 
+    def update(self, category: str = "thinking", custom_message: str | None = None) -> None:
+        """Update the patience display with a new phrase."""
+        if self._spinner:
+            if custom_message:
+                self._spinner.update(message=custom_message)
+            else:
+                self._spinner.update(message=get_random_phrase(category))
 
-# Fun facts about coding to display during long waits
-CODING_FACTS: list[str] = [
-    "The first computer bug was an actual bug - a moth found in a relay.",
-    "Python was named after Monty Python, not the snake.",
-    "The first programmer was Ada Lovelace, in the 1840s.",
-    "Git was created by Linus Torvalds in just two weeks.",
-    "The term 'debugging' predates computers by centuries.",
-    "'Hello World' was first used in a 1972 C tutorial.",
-    "FORTRAN, created in 1957, is still used in scientific computing.",
-    "JavaScript was created in just 10 days.",
-    "The @ symbol was almost forgotten before email revived it.",
-    "USB was designed to be flipped in the wrong way first.",
-]
-
-
-def get_random_fact() -> str:
-    """Get a random coding fact.
-
-    Returns:
-        A fun fact about coding/programming
-    """
-    return random.choice(CODING_FACTS)
+    def stop(self) -> None:
+        """Stop the patience display."""
+        if self._spinner:
+            self._spinner.stop()
+            self._spinner = None
