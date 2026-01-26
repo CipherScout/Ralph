@@ -1,11 +1,13 @@
 """Tests for Ralph CLI."""
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from typer.testing import CliRunner
 
 from ralph.cli import app
+from ralph.events import StreamEvent, StreamEventType
 from ralph.context import load_injections
 from ralph.executors import PhaseExecutionResult
 from ralph.models import Phase, Task, TaskStatus
@@ -435,10 +437,16 @@ class TestPhaseCommands:
         initialize_state(tmp_path)
 
         # Mock the executor to return success without making API calls
+        # stream_execution is an async generator, so we need to mock it properly
+        async def mock_stream_execution(*args: Any, **kwargs: Any) -> Any:
+            # Yield a simple info event then stop
+            yield StreamEvent(
+                type=StreamEventType.INFO,
+                data={"message": "Discovery complete"},
+            )
+
         mock_executor = MagicMock()
-        mock_executor.execute = AsyncMock(
-            return_value=PhaseExecutionResult(success=True, phase=Phase.DISCOVERY, artifacts={})
-        )
+        mock_executor.stream_execution = mock_stream_execution
         mock_executor_cls.return_value = mock_executor
 
         result = runner.invoke(app, ["discover", "-p", str(tmp_path)])
@@ -453,11 +461,15 @@ class TestPhaseCommands:
         """Test plan sets phase to planning."""
         initialize_state(tmp_path)
 
-        # Mock the executor to return success without making API calls
+        # Mock the executor stream_execution as an async generator
+        async def mock_stream_execution(*args: Any, **kwargs: Any) -> Any:
+            yield StreamEvent(
+                type=StreamEventType.INFO,
+                data={"message": "Planning complete"},
+            )
+
         mock_executor = MagicMock()
-        mock_executor.execute = AsyncMock(
-            return_value=PhaseExecutionResult(success=True, phase=Phase.PLANNING, artifacts={})
-        )
+        mock_executor.stream_execution = mock_stream_execution
         mock_executor_cls.return_value = mock_executor
 
         result = runner.invoke(app, ["plan", "-p", str(tmp_path)])
@@ -472,11 +484,15 @@ class TestPhaseCommands:
         """Test build sets phase to building."""
         initialize_state(tmp_path)
 
-        # Mock the executor to return success without making API calls
+        # Mock the executor stream_execution as an async generator
+        async def mock_stream_execution(*args: Any, **kwargs: Any) -> Any:
+            yield StreamEvent(
+                type=StreamEventType.INFO,
+                data={"message": "Building complete"},
+            )
+
         mock_executor = MagicMock()
-        mock_executor.execute = AsyncMock(
-            return_value=PhaseExecutionResult(success=True, phase=Phase.BUILDING, artifacts={})
-        )
+        mock_executor.stream_execution = mock_stream_execution
         mock_executor_cls.return_value = mock_executor
 
         result = runner.invoke(app, ["build", "-p", str(tmp_path)])
@@ -491,11 +507,15 @@ class TestPhaseCommands:
         """Test validate sets phase to validation."""
         initialize_state(tmp_path)
 
-        # Mock the executor to return success without making API calls
+        # Mock the executor stream_execution as an async generator
+        async def mock_stream_execution(*args: Any, **kwargs: Any) -> Any:
+            yield StreamEvent(
+                type=StreamEventType.INFO,
+                data={"message": "Validation complete"},
+            )
+
         mock_executor = MagicMock()
-        mock_executor.execute = AsyncMock(
-            return_value=PhaseExecutionResult(success=True, phase=Phase.VALIDATION, artifacts={})
-        )
+        mock_executor.stream_execution = mock_stream_execution
         mock_executor_cls.return_value = mock_executor
 
         result = runner.invoke(app, ["validate", "-p", str(tmp_path)])

@@ -12,7 +12,9 @@
       "mcp__plugin_serena_serena__list_dir",
       "mcp__plugin_serena_serena__activate_project",
       "Bash(tree:*)",
-      "Bash(uv run ralph-agent:*)"
+      "Bash(uv run ralph-agent:*)",
+      "mcp__plugin_serena_serena__read_file",
+      "mcp__plugin_serena_serena__think_about_collected_information"
     ]
   }
 }

@@ -7,6 +7,7 @@ Ralph's phase-based architecture, tool allocation, and safety hooks.
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -25,6 +26,19 @@ from claude_agent_sdk import (
     query,
 )
 
+from ralph.events import (
+    StreamEvent,
+    error_event,
+    iteration_end_event,
+    iteration_start_event,
+    needs_input_event,
+    task_blocked_event,
+    task_complete_event,
+    text_delta_event,
+    tool_end_event,
+    tool_start_event,
+    warning_event,
+)
 from ralph.models import Phase, RalphState
 
 if TYPE_CHECKING:
@@ -377,6 +391,210 @@ class RalphSDKClient:
             completion_notes=completion_notes,
             metrics=metrics,
             messages=messages,
+            final_text="\n".join(final_text_parts),
+        )
+
+    async def stream_iteration(
+        self,
+        prompt: str,
+        phase: Phase | None = None,
+        system_prompt: str | None = None,
+        max_turns: int | None = None,
+    ) -> AsyncGenerator[StreamEvent, str | None]:
+        """Stream events during iteration execution.
+
+        This is an async generator that yields StreamEvent objects in real-time
+        as the iteration progresses. When a NEEDS_INPUT event is yielded (from
+        AskUserQuestion tool), the caller can send() the user's response back.
+
+        This method enables transparent, real-time CLI output showing what the
+        agent is thinking and doing.
+
+        Args:
+            prompt: The user prompt to send
+            phase: Override phase (defaults to state.current_phase)
+            system_prompt: Custom system prompt
+            max_turns: Override max turns
+
+        Yields:
+            StreamEvent objects for text, tool use, user questions, etc.
+
+        Example:
+            async def run_with_display():
+                gen = client.stream_iteration(prompt="Analyze this code")
+                event = await gen.asend(None)  # Start generator
+                while True:
+                    try:
+                        user_input = display_event(event)  # Returns input if NEEDS_INPUT
+                        event = await gen.asend(user_input)
+                    except StopAsyncIteration:
+                        break
+        """
+        options = self._build_options(phase, system_prompt, max_turns)
+        start_time = datetime.now()
+        current_phase = phase or self.state.current_phase
+
+        # Metrics tracking
+        input_tokens = 0
+        output_tokens = 0
+        tool_calls = 0
+        task_completed = False
+        task_id: str | None = None
+        completion_notes: str | None = None
+        final_text_parts: list[str] = []
+
+        # Yield iteration start event
+        yield iteration_start_event(
+            iteration=self.state.iteration_count,
+            phase=current_phase.value,
+            session_id=self._session_id,
+            usage_percentage=self.state.context_budget.usage_percentage,
+        )
+
+        try:
+            async with ClaudeSDKClient(options=options) as client:
+                await client.query(prompt)
+
+                async for msg in client.receive_response():
+                    # Capture session ID for continuation
+                    if isinstance(msg, SystemMessage) and hasattr(msg, "session_id"):
+                        self._session_id = msg.session_id
+
+                    # Process assistant messages - yield events for each block
+                    if isinstance(msg, AssistantMessage):
+                        for block in msg.content:
+                            if isinstance(block, TextBlock):
+                                # Yield text delta for streaming display
+                                final_text_parts.append(block.text)
+                                yield text_delta_event(block.text)
+
+                            elif isinstance(block, ToolUseBlock):
+                                tool_calls += 1
+                                tool_input_dict = (
+                                    block.input
+                                    if isinstance(block.input, dict)
+                                    else {}
+                                )
+
+                                # Yield tool start event
+                                yield tool_start_event(
+                                    tool_name=block.name,
+                                    tool_input=tool_input_dict,
+                                    tool_id=block.id,
+                                )
+
+                                # Handle AskUserQuestion specially - need user input
+                                if block.name == "AskUserQuestion":
+                                    question = tool_input_dict.get("question", "")
+                                    options_list = tool_input_dict.get("options", [])
+
+                                    # Yield NEEDS_INPUT and receive user response via send()
+                                    user_response: str | None = yield needs_input_event(
+                                        question=question,
+                                        options=options_list,
+                                        tool_id=block.id,
+                                    )
+
+                                    # The SDK handles providing the response back
+                                    # to Claude automatically via the tool result
+                                    if user_response:
+                                        # Yield tool end with the user's response
+                                        yield tool_end_event(
+                                            tool_name=block.name,
+                                            tool_result=user_response,
+                                            tool_id=block.id,
+                                            success=True,
+                                        )
+
+                                # Check for Ralph task management tools
+                                elif "ralph_mark_task_complete" in block.name:
+                                    task_completed = True
+                                    task_id = tool_input_dict.get("task_id")
+                                    completion_notes = tool_input_dict.get(
+                                        "verification_notes"
+                                    )
+                                    yield task_complete_event(
+                                        task_id=task_id or "unknown",
+                                        verification_notes=completion_notes,
+                                    )
+
+                                elif "ralph_mark_task_blocked" in block.name:
+                                    blocked_task_id = tool_input_dict.get("task_id")
+                                    blocked_reason = tool_input_dict.get(
+                                        "reason", "Unknown"
+                                    )
+                                    yield task_blocked_event(
+                                        task_id=blocked_task_id or "unknown",
+                                        reason=blocked_reason,
+                                    )
+
+                                else:
+                                    # For other tools, just yield tool end
+                                    # (result will come separately)
+                                    yield tool_end_event(
+                                        tool_name=block.name,
+                                        tool_id=block.id,
+                                        success=True,
+                                    )
+
+                    # Process result messages for token counts
+                    if isinstance(msg, ResultMessage) and hasattr(msg, "usage"):
+                        usage = msg.usage
+                        if usage is not None:
+                            if hasattr(usage, "input_tokens"):
+                                input_tokens += usage.input_tokens
+                            if hasattr(usage, "output_tokens"):
+                                output_tokens += usage.output_tokens
+
+        except ConnectionError as e:
+            yield error_event(f"Connection error: {e}", error_type="connection")
+            logger.error("SDK connection error: %s", e)
+        except TimeoutError as e:
+            yield error_event(f"Timeout error: {e}", error_type="timeout")
+            logger.error("SDK timeout: %s", e)
+        except PermissionError as e:
+            yield error_event(
+                f"Permission/authentication error: {e}", error_type="auth"
+            )
+            logger.error("SDK authentication error: %s", e)
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "rate" in error_msg and "limit" in error_msg:
+                yield warning_event(f"Rate limit exceeded: {e}")
+                logger.warning("SDK rate limit hit: %s", e)
+            else:
+                yield error_event(str(e), error_type="unknown")
+                logger.error("SDK error during iteration: %s", e, exc_info=True)
+
+        # Calculate final metrics
+        end_time = datetime.now()
+        duration_ms = int((end_time - start_time).total_seconds() * 1000)
+        total_tokens = input_tokens + output_tokens
+        cost_usd = calculate_cost(
+            input_tokens,
+            output_tokens,
+            get_model_for_phase(current_phase, self.config),
+        )
+
+        # Check if handoff is needed
+        needs_handoff = False
+        if self.state.context_budget.current_usage + total_tokens >= (
+            self.state.context_budget.smart_zone_max
+        ):
+            needs_handoff = True
+
+        # Yield iteration end event with summary
+        yield iteration_end_event(
+            iteration=self.state.iteration_count,
+            phase=current_phase.value,
+            success=True,  # No exception means success
+            tokens_used=total_tokens,
+            cost_usd=cost_usd,
+            duration_ms=duration_ms,
+            tool_calls=tool_calls,
+            task_completed=task_completed,
+            task_id=task_id,
+            needs_handoff=needs_handoff,
             final_text="\n".join(final_text_parts),
         )
 

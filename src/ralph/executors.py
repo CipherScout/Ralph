@@ -8,11 +8,18 @@ common iteration infrastructure.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ralph.config import RalphConfig, load_config
+from ralph.events import (
+    StreamEvent,
+    StreamEventType,
+    info_event,
+    phase_change_event,
+)
 from ralph.models import ImplementationPlan, Phase, RalphState, Task
 from ralph.persistence import load_plan, load_state, save_plan, save_state
 from ralph.phases import get_phase_prompt
@@ -160,6 +167,88 @@ class PhaseExecutor(ABC):
 
         return result
 
+    async def stream_iteration(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        max_turns: int | None = None,
+    ) -> AsyncGenerator[StreamEvent, str | None]:
+        """Stream events from a single iteration.
+
+        This wraps the SDK client's stream_iteration and adds executor-level
+        tracking. Events are yielded as they happen, enabling real-time display.
+
+        When NEEDS_INPUT events are yielded, the caller can send() the user's
+        response back to continue execution.
+
+        Args:
+            prompt: User prompt for this iteration
+            system_prompt: Optional system prompt override
+            max_turns: Optional max turns override
+
+        Yields:
+            StreamEvent objects for text, tool use, user questions, etc.
+
+        Example:
+            async def run_discovery():
+                gen = executor.stream_iteration("Analyze requirements")
+                event = await gen.asend(None)
+                while True:
+                    try:
+                        user_input = None
+                        if event.type == StreamEventType.NEEDS_INPUT:
+                            user_input = input(event.question)
+                        event = await gen.asend(user_input)
+                    except StopAsyncIteration:
+                        break
+        """
+        # Start iteration tracking
+        self.state.start_iteration()
+
+        iteration_tokens = 0
+        iteration_cost = 0.0
+        task_completed = False
+
+        try:
+            # Stream events from SDK client
+            gen = self.client.stream_iteration(
+                prompt=prompt,
+                phase=self.phase,
+                system_prompt=system_prompt,
+                max_turns=max_turns,
+            )
+
+            user_response: str | None = None
+            event = await gen.asend(None)  # Start the generator
+
+            while True:
+                try:
+                    # Capture metrics from ITERATION_END events
+                    if event.type == StreamEventType.ITERATION_END:
+                        iteration_tokens = event.data.get("tokens_used", 0)
+                        iteration_cost = event.data.get("cost_usd", 0.0)
+                        task_completed = event.data.get("task_completed", False)
+
+                    # Yield event to caller and receive potential user input
+                    user_response = yield event
+
+                    # Send user input back to SDK client generator (for NEEDS_INPUT)
+                    event = await gen.asend(user_response)
+
+                except StopAsyncIteration:
+                    break
+
+        finally:
+            # Record iteration metrics
+            self.state.end_iteration(
+                cost_usd=iteration_cost,
+                tokens_used=iteration_tokens,
+                task_completed=task_completed,
+            )
+
+            # Save state after iteration
+            self.save_state()
+
 
 class DiscoveryExecutor(PhaseExecutor):
     """Executor for the Discovery phase.
@@ -275,6 +364,133 @@ Start by asking the user what they want to build."""
                 error=str(e),
             )
 
+    async def stream_execution(
+        self,
+        initial_goal: str | None = None,
+        max_iterations: int = 10,
+        **kwargs: Any,
+    ) -> AsyncGenerator[StreamEvent, str | None]:
+        """Stream events during Discovery phase execution.
+
+        This method yields events as they happen during the entire discovery
+        phase, enabling real-time CLI display and user interaction.
+
+        When NEEDS_INPUT events are yielded (from AskUserQuestion tool),
+        the caller should send() the user's response back.
+
+        Args:
+            initial_goal: Optional initial goal description
+            max_iterations: Maximum iterations for discovery
+
+        Yields:
+            StreamEvent objects for all execution events
+
+        Example:
+            async def run_discovery():
+                display = RalphLiveDisplay(console)
+                gen = executor.stream_execution(initial_goal="Build a REST API")
+                event = await gen.asend(None)
+                while True:
+                    try:
+                        user_input = display.handle_event(event)
+                        event = await gen.asend(user_input)
+                    except StopAsyncIteration:
+                        break
+        """
+        iterations_run = 0
+        total_cost = 0.0
+        total_tokens = 0
+        last_final_text = ""
+
+        # Build initial prompt
+        if initial_goal:
+            prompt = f"""You are in the DISCOVERY phase. The user has provided this initial goal:
+
+{initial_goal}
+
+Use the JTBD framework to clarify requirements:
+1. Ask clarifying questions using the AskUserQuestion tool
+2. Create spec files in the specs/ directory
+3. Continue until requirements are clear
+
+Start by asking about the user's specific needs and context."""
+        else:
+            prompt = """You are in the DISCOVERY phase.
+
+Use the JTBD framework to understand what the user wants to build:
+1. Ask clarifying questions using the AskUserQuestion tool
+2. Create spec files in the specs/ directory for each requirement
+3. Continue until requirements are fully understood
+
+Start by asking the user what they want to build."""
+
+        # Yield phase start info
+        yield info_event(f"Starting Discovery phase with goal: {initial_goal or '(none)'}")
+
+        try:
+            # Set phase in state
+            self.state.current_phase = Phase.DISCOVERY
+            self.save_state()
+
+            # Run discovery iterations with streaming
+            for i in range(max_iterations):
+                current_prompt = prompt if i == 0 else "Continue discovery process."
+
+                # Stream events from iteration
+                gen = self.stream_iteration(
+                    prompt=current_prompt,
+                    system_prompt=self.get_system_prompt(),
+                )
+
+                user_response: str | None = None
+                event = await gen.asend(None)  # Start iteration generator
+
+                while True:
+                    try:
+                        # Capture final text and metrics from iteration end events
+                        if event.type == StreamEventType.ITERATION_END:
+                            total_cost += event.data.get("cost_usd", 0.0)
+                            total_tokens += event.data.get("tokens_used", 0)
+                            last_final_text = event.data.get("final_text", "")
+                            iterations_run += 1
+
+                        # Yield event to caller and get potential user input
+                        user_response = yield event
+
+                        # Pass user response back to iteration generator
+                        event = await gen.asend(user_response)
+
+                    except StopAsyncIteration:
+                        break
+
+                # Check for phase completion signal in output
+                if "discovery complete" in last_final_text.lower():
+                    yield info_event("Discovery phase completion signal detected")
+                    break
+
+            # List created specs
+            specs_dir = self.project_root / "specs"
+            specs_created: list[str] = []
+            if specs_dir.exists():
+                specs_created = [f.name for f in specs_dir.glob("*.md")]
+
+            # Yield completion info
+            yield info_event(
+                f"Discovery complete: {len(specs_created)} specs created, "
+                f"{iterations_run} iterations, ${total_cost:.4f}"
+            )
+
+            # Signal phase transition
+            yield phase_change_event(
+                old_phase=Phase.DISCOVERY.value,
+                new_phase=Phase.PLANNING.value,
+            )
+
+        except Exception as e:
+            from ralph.events import error_event
+
+            yield error_event(str(e), error_type="discovery_error")
+
 
 class PlanningExecutor(PhaseExecutor):
     """Executor for the Planning phase.
@@ -388,6 +604,119 @@ Start by reading the specs and analyzing the codebase."""
                 tokens_used=total_tokens,
                 error=str(e),
             )
+
+    async def stream_execution(
+        self,
+        max_iterations: int = 30,
+        **kwargs: Any,
+    ) -> AsyncGenerator[StreamEvent, str | None]:
+        """Stream events during Planning phase execution.
+
+        This method yields events as they happen during the entire planning
+        phase, enabling real-time CLI display and user interaction.
+
+        Args:
+            max_iterations: Maximum iterations for planning
+
+        Yields:
+            StreamEvent objects for all execution events
+        """
+        iterations_run = 0
+        total_cost = 0.0
+        total_tokens = 0
+        last_final_text = ""
+
+        prompt = """You are in the PLANNING phase.
+
+Analyze the specs/ directory and current codebase to create an implementation plan:
+
+1. Read all spec files in specs/ directory
+2. Analyze the existing codebase structure
+3. Identify gaps between specs and implementation
+4. Create tasks using the ralph_add_task tool for each piece of work
+5. Size tasks to fit within ~30 minutes of work each
+6. Set dependencies between tasks appropriately
+7. Set priorities (1 = highest priority)
+
+Each task should have:
+- Clear description of what to implement
+- Dependencies on other tasks if any
+- Verification criteria (how to know it's done)
+
+Start by reading the specs and analyzing the codebase."""
+
+        # Yield phase start info
+        yield info_event("Starting Planning phase - analyzing specs and codebase")
+
+        try:
+            # Set phase in state
+            self.state.current_phase = Phase.PLANNING
+            self.save_state()
+
+            # Run planning iterations with streaming
+            for i in range(max_iterations):
+                continue_prompt = "Continue planning. Create more tasks if needed."
+                current_prompt = prompt if i == 0 else continue_prompt
+
+                # Stream events from iteration
+                gen = self.stream_iteration(
+                    prompt=current_prompt,
+                    system_prompt=self.get_system_prompt(),
+                )
+
+                user_response: str | None = None
+                event = await gen.asend(None)  # Start iteration generator
+
+                while True:
+                    try:
+                        # Capture final text and metrics from iteration end events
+                        if event.type == StreamEventType.ITERATION_END:
+                            total_cost += event.data.get("cost_usd", 0.0)
+                            total_tokens += event.data.get("tokens_used", 0)
+                            last_final_text = event.data.get("final_text", "")
+                            iterations_run += 1
+
+                        # Yield event to caller and get potential user input
+                        user_response = yield event
+
+                        # Pass user response back to iteration generator
+                        event = await gen.asend(user_response)
+
+                    except StopAsyncIteration:
+                        break
+
+                # Check for phase completion signal in output
+                if "planning complete" in last_final_text.lower():
+                    yield info_event("Planning phase completion signal detected")
+                    break
+
+                # Reload plan to check progress
+                self._plan = None  # Force reload
+                if self.plan.pending_count > 0:
+                    # Have tasks, may be ready to proceed
+                    yield info_event(f"Plan has {self.plan.pending_count} tasks, ready to proceed")
+                    break
+
+            # Get final task count
+            self._plan = None
+            task_count = len(self.plan.tasks)
+
+            # Yield completion info
+            yield info_event(
+                f"Planning complete: {task_count} tasks created, "
+                f"{iterations_run} iterations, ${total_cost:.4f}"
+            )
+
+            # Signal phase transition
+            yield phase_change_event(
+                old_phase=Phase.PLANNING.value,
+                new_phase=Phase.BUILDING.value,
+            )
+
+        except Exception as e:
+            from ralph.events import error_event
+
+            yield error_event(str(e), error_type="planning_error")
 
 
 class BuildingExecutor(PhaseExecutor):
@@ -552,6 +881,169 @@ Start implementing now."""
                 tokens_used=total_tokens,
                 error=str(e),
             )
+
+    async def stream_execution(
+        self,
+        target_task_id: str | None = None,
+        max_iterations: int = 100,
+        **kwargs: Any,
+    ) -> AsyncGenerator[StreamEvent, str | None]:
+        """Stream events during Building phase execution.
+
+        This method yields events as they happen during the entire building
+        phase, enabling real-time CLI display and user interaction.
+
+        Args:
+            target_task_id: Optional specific task to work on
+            max_iterations: Maximum iterations
+
+        Yields:
+            StreamEvent objects for all execution events
+        """
+        from ralph.events import error_event, task_complete_event, warning_event
+
+        iterations_run = 0
+        tasks_completed = 0
+        total_cost = 0.0
+        total_tokens = 0
+
+        # Yield phase start info
+        if target_task_id:
+            yield info_event(f"Starting Building phase - targeting task: {target_task_id}")
+        else:
+            yield info_event("Starting Building phase - working on next available task")
+
+        try:
+            # Set phase in state
+            self.state.current_phase = Phase.BUILDING
+            self.save_state()
+
+            # Main building loop
+            for _ in range(max_iterations):
+                # Get next task
+                self._plan = None  # Force reload
+                if target_task_id:
+                    task = self.plan.get_task_by_id(target_task_id)
+                    if task is None:
+                        yield error_event(
+                            f"Task not found: {target_task_id}",
+                            error_type="task_not_found",
+                        )
+                        return
+                else:
+                    task = self.plan.get_next_task()
+
+                if task is None:
+                    # No more tasks
+                    yield info_event("No more tasks to process")
+                    break
+
+                # Notify about starting task
+                yield info_event(f"Starting task: {task.id} - {task.description}")
+
+                # Build prompt for this task
+                prompt = f"""You are in the BUILDING phase.
+
+Your current task:
+- ID: {task.id}
+- Description: {task.description}
+- Priority: {task.priority}
+- Dependencies: {', '.join(task.dependencies) if task.dependencies else 'None'}
+- Verification criteria: {self._format_criteria(task)}
+
+Instructions:
+1. First call ralph_mark_task_in_progress with task_id="{task.id}"
+2. Implement the task using TDD:
+   - Write failing tests first
+   - Implement the feature
+   - Make tests pass
+3. Run tests with 'uv run pytest'
+4. When complete, call ralph_mark_task_complete with verification notes
+5. If blocked, call ralph_mark_task_blocked with reason
+
+Use the available tools to read/write files, run commands, and manage tasks.
+Start implementing now."""
+
+                # Stream events from iteration
+                gen = self.stream_iteration(
+                    prompt=prompt,
+                    system_prompt=self.get_system_prompt(task),
+                )
+
+                user_response: str | None = None
+                event = await gen.asend(None)  # Start iteration generator
+
+                iteration_success = True
+                iteration_task_completed = False
+                iteration_error: str | None = None
+
+                while True:
+                    try:
+                        # Capture metrics from iteration end events
+                        if event.type == StreamEventType.ITERATION_END:
+                            total_cost += event.data.get("cost_usd", 0.0)
+                            total_tokens += event.data.get("tokens_used", 0)
+                            iteration_success = event.data.get("success", True)
+                            iteration_task_completed = event.data.get("task_completed", False)
+                            iteration_error = event.data.get("error")
+                            iterations_run += 1
+
+                        # Yield event to caller and get potential user input
+                        user_response = yield event
+
+                        # Pass user response back to iteration generator
+                        event = await gen.asend(user_response)
+
+                    except StopAsyncIteration:
+                        break
+
+                if iteration_task_completed:
+                    tasks_completed += 1
+                    yield task_complete_event(task.id)
+
+                if not iteration_success:
+                    # Record but continue - circuit breaker will halt if needed
+                    self.state.circuit_breaker.record_failure(iteration_error or "unknown_error")
+                    yield warning_event(f"Iteration failed: {iteration_error}")
+                else:
+                    self.state.circuit_breaker.record_success(
+                        tasks_completed=1 if iteration_task_completed else 0
+                    )
+
+                self.save_state()
+
+                # Check circuit breaker
+                should_halt, halt_reason = self.state.should_halt()
+                if should_halt:
+                    yield error_event(
+                        f"Circuit breaker tripped: {halt_reason}",
+                        error_type="circuit_breaker",
+                    )
+                    return
+
+                # If targeting specific task and it's done, stop
+                if target_task_id and iteration_task_completed:
+                    break
+
+            # Check if all tasks complete
+            self._plan = None
+            all_complete = self.plan.pending_count == 0
+
+            # Yield completion info
+            yield info_event(
+                f"Building complete: {tasks_completed} tasks completed, "
+                f"{iterations_run} iterations, ${total_cost:.4f}"
+            )
+
+            # Signal phase transition if all complete
+            if all_complete:
+                yield phase_change_event(
+                    old_phase=Phase.BUILDING.value,
+                    new_phase=Phase.VALIDATION.value,
+                )
+
+        except Exception as e:
+            yield error_event(str(e), error_type="building_error")
 
 
 class ValidationExecutor(PhaseExecutor):
@@ -721,6 +1213,131 @@ If everything passes, confirm validation is complete."""
                 tokens_used=total_tokens,
                 error=str(e),
             )
+
+    async def stream_execution(
+        self,
+        max_iterations: int = 20,
+        **kwargs: Any,
+    ) -> AsyncGenerator[StreamEvent, str | None]:
+        """Stream events during Validation phase execution.
+
+        This method yields events as they happen during the entire validation
+        phase, enabling real-time CLI display and user interaction.
+
+        For human approval, the method yields a NEEDS_INPUT event and expects
+        the caller to send() the user's approval response back.
+
+        Args:
+            max_iterations: Maximum iterations for validation
+
+        Yields:
+            StreamEvent objects for all execution events
+        """
+        from ralph.events import error_event, needs_input_event
+
+        iterations_run = 0
+        total_cost = 0.0
+        total_tokens = 0
+        validation_results: dict[str, bool] = {}
+        last_final_text = ""
+
+        prompt = """You are in the VALIDATION phase.
+
+Perform comprehensive verification:
+
+1. Run all tests: uv run pytest -v
+2. Run linting: uv run ruff check .
+3. Run type checking: uv run mypy .
+4. Review specs/ and verify implementation matches
+5. Check for any TODO or FIXME comments that should be addressed
+
+Report the results of each check. If any check fails, note what needs to be fixed.
+If everything passes, confirm validation is complete."""
+
+        # Yield phase start info
+        yield info_event("Starting Validation phase - running comprehensive verification")
+
+        try:
+            # Set phase in state
+            self.state.current_phase = Phase.VALIDATION
+            self.save_state()
+
+            # Run validation iterations with streaming
+            for i in range(max_iterations):
+                current_prompt = prompt if i == 0 else "Continue validation. Fix any issues found."
+
+                # Stream events from iteration
+                gen = self.stream_iteration(
+                    prompt=current_prompt,
+                    system_prompt=self.get_system_prompt(),
+                )
+
+                user_response: str | None = None
+                event = await gen.asend(None)  # Start iteration generator
+
+                while True:
+                    try:
+                        # Capture final text and metrics from iteration end events
+                        if event.type == StreamEventType.ITERATION_END:
+                            total_cost += event.data.get("cost_usd", 0.0)
+                            total_tokens += event.data.get("tokens_used", 0)
+                            last_final_text = event.data.get("final_text", "")
+                            iterations_run += 1
+
+                        # Yield event to caller and get potential user input
+                        user_response = yield event
+
+                        # Pass user response back to iteration generator
+                        event = await gen.asend(user_response)
+
+                    except StopAsyncIteration:
+                        break
+
+                # Check for completion signal
+                if "validation complete" in last_final_text.lower():
+                    validation_results["all_passed"] = True
+                    yield info_event("Validation checks passed")
+
+                    # Human approval checkpoint if configured
+                    if self.config.validation.require_human_approval:
+                        # Display summary and ask for approval
+                        summary_preview = last_final_text[:500]
+                        if len(last_final_text) > 500:
+                            summary_preview += "..."
+
+                        approval_response = yield needs_input_event(
+                            question=(
+                                f"VALIDATION COMPLETE - HUMAN APPROVAL REQUIRED\n\n"
+                                f"Iterations: {iterations_run}\n"
+                                f"Cost: ${total_cost:.4f}\n\n"
+                                f"Summary:\n{summary_preview}\n\n"
+                                f"Approve validation? (yes/no)"
+                            ),
+                            options=[
+                                {"label": "Yes", "description": "Approve and complete validation"},
+                                {"label": "No", "description": "Reject validation"},
+                            ],
+                        )
+
+                        approved = (
+                            approval_response
+                            and approval_response.lower() in ("yes", "y", "1")
+                        )
+                        if not approved:
+                            yield info_event("Validation rejected by user")
+                            return
+                        yield info_event("Validation approved by user")
+                    break
+
+            # Yield completion info
+            passed = validation_results.get("all_passed", False)
+            status = "passed" if passed else "incomplete"
+            yield info_event(
+                f"Validation {status}: {iterations_run} iterations, ${total_cost:.4f}"
+            )
+
+        except Exception as e:
+            yield error_event(str(e), error_type="validation_error")
 
 
 def get_executor_for_phase(

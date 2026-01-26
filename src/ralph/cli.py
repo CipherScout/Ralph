@@ -1,6 +1,7 @@
 """Ralph CLI entry point using Typer."""
 
 import asyncio
+import json
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -8,6 +9,7 @@ from typing import Any
 import typer
 from rich.console import Console
 from rich.panel import Panel
+from rich.prompt import Prompt
 from rich.table import Table
 
 from ralph import __version__
@@ -17,6 +19,7 @@ from ralph.context import (
     execute_context_handoff,
     load_session_history,
 )
+from ralph.events import StreamEvent, StreamEventType
 from ralph.executors import (
     BuildingExecutor,
     DiscoveryExecutor,
@@ -43,6 +46,256 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+
+
+class RalphLiveDisplay:
+    """Rich-based live display for Ralph execution with real-time event handling.
+
+    This class provides a transparent, real-time CLI experience by handling
+    StreamEvents from the Ralph execution loop. It displays tool calls,
+    text output, and handles user interaction when questions are asked.
+
+    Attributes:
+        console: Rich Console instance for output
+        verbosity: 0=quiet, 1=normal, 2=verbose
+        current_text: Accumulated text from TEXT_DELTA events
+        tool_stack: Stack of currently executing tools
+    """
+
+    def __init__(self, console: Console, verbosity: int = 1) -> None:
+        """Initialize the live display.
+
+        Args:
+            console: Rich Console for output
+            verbosity: Output verbosity level (0=quiet, 1=normal, 2=verbose)
+        """
+        self.console = console
+        self.verbosity = verbosity
+        self.current_text = ""
+        self.tool_stack: list[str] = []
+        self._iteration_count = 0
+        self._total_cost = 0.0
+        self._total_tokens = 0
+
+    def handle_event(self, event: StreamEvent) -> str | None:
+        """Handle a stream event and return user input if needed.
+
+        This method processes each event type and produces appropriate
+        CLI output. For NEEDS_INPUT events, it pauses to get user input
+        and returns the response.
+
+        Args:
+            event: The StreamEvent to handle
+
+        Returns:
+            User input string if event was NEEDS_INPUT, otherwise None
+        """
+        if event.type == StreamEventType.ITERATION_START:
+            self._iteration_count = event.iteration or 0
+            if self.verbosity >= 1:
+                phase = event.phase or "unknown"
+                self.console.print(
+                    f"\n[bold blue]Iteration {self._iteration_count}[/bold blue] "
+                    f"[dim]({phase})[/dim]"
+                )
+
+        elif event.type == StreamEventType.ITERATION_END:
+            tokens = event.data.get("tokens_used", 0)
+            cost = event.data.get("cost_usd", 0.0)
+            self._total_tokens += tokens
+            self._total_cost += cost
+
+            if self.verbosity >= 1:
+                success = event.data.get("success", False)
+                status = "[green]OK[/green]" if success else "[red]FAILED[/red]"
+                self.console.print(
+                    f"  {status} [dim]({tokens:,} tokens, ${cost:.4f})[/dim]"
+                )
+
+        elif event.type == StreamEventType.TEXT_DELTA:
+            self.current_text += event.text or ""
+            # In verbose mode, stream text as it arrives
+            if self.verbosity >= 2 and event.text:
+                self.console.print(event.text, end="")
+
+        elif event.type == StreamEventType.TOOL_USE_START:
+            tool_name = event.tool_name or "unknown"
+            self.tool_stack.append(tool_name)
+
+            if self.verbosity >= 1:
+                # Summarize tool input for display
+                summary = self._summarize_tool_input(tool_name, event.tool_input)
+                if summary:
+                    self.console.print(f"[dim]  -> {tool_name}: {summary}[/dim]")
+                else:
+                    self.console.print(f"[dim]  -> {tool_name}[/dim]")
+
+        elif event.type == StreamEventType.TOOL_USE_END:
+            if self.tool_stack:
+                self.tool_stack.pop()
+
+        elif event.type == StreamEventType.NEEDS_INPUT:
+            # Display question with Rich formatting
+            self.console.print()
+            question_text = event.question or "Please provide input:"
+            self.console.print(
+                Panel(
+                    question_text,
+                    title="[bold yellow]Question[/bold yellow]",
+                    border_style="yellow",
+                )
+            )
+
+            # Show options if provided
+            if event.options:
+                for i, opt in enumerate(event.options, 1):
+                    if isinstance(opt, dict):
+                        label = opt.get("label", str(opt))
+                        desc = opt.get("description", "")
+                        if desc:
+                            self.console.print(f"  {i}. {label} [dim]- {desc}[/dim]")
+                        else:
+                            self.console.print(f"  {i}. {label}")
+                    else:
+                        self.console.print(f"  {i}. {opt}")
+                self.console.print()
+
+            # Get user response
+            response = Prompt.ask("[bold]Your answer[/bold]")
+            return response
+
+        elif event.type == StreamEventType.TASK_COMPLETE:
+            task_id = event.task_id or event.data.get("task_id", "unknown")
+            notes = event.data.get("verification_notes", "")
+            self.console.print(f"[green]  Task completed: {task_id}[/green]")
+            if notes and self.verbosity >= 2:
+                self.console.print(f"[dim]    Notes: {notes}[/dim]")
+
+        elif event.type == StreamEventType.TASK_BLOCKED:
+            task_id = event.task_id or event.data.get("task_id", "unknown")
+            reason = event.data.get("reason", "Unknown reason")
+            self.console.print(f"[yellow]  Task blocked: {task_id}[/yellow]")
+            self.console.print(f"[dim]    Reason: {reason}[/dim]")
+
+        elif event.type == StreamEventType.PHASE_CHANGE:
+            old_phase = event.data.get("old_phase", "unknown")
+            new_phase = event.data.get("new_phase", event.phase or "unknown")
+            self.console.print(
+                f"\n[bold blue]Phase transition: {old_phase} -> {new_phase}[/bold blue]"
+            )
+
+        elif event.type == StreamEventType.HANDOFF_START:
+            reason = event.data.get("reason", "context budget")
+            self.console.print(f"\n[yellow]Context handoff ({reason})...[/yellow]")
+
+        elif event.type == StreamEventType.HANDOFF_COMPLETE:
+            new_session = event.session_id or "new"
+            self.console.print(f"[green]Handoff complete. New session: {new_session}[/green]")
+
+        elif event.type == StreamEventType.ERROR:
+            message = event.error_message or event.data.get("message", "Unknown error")
+            error_type = event.data.get("error_type", "")
+            if error_type:
+                self.console.print(f"[red]Error ({error_type}): {message}[/red]")
+            else:
+                self.console.print(f"[red]Error: {message}[/red]")
+
+        elif event.type == StreamEventType.WARNING:
+            message = event.error_message or event.data.get("message", "Warning")
+            self.console.print(f"[yellow]Warning: {message}[/yellow]")
+
+        elif event.type == StreamEventType.INFO:
+            message = event.data.get("message", "")
+            if message and self.verbosity >= 1:
+                self.console.print(f"[dim]{message}[/dim]")
+
+        return None
+
+    def _summarize_tool_input(
+        self, tool_name: str | None, input_data: dict[str, Any] | None
+    ) -> str:
+        """Summarize tool input for concise display.
+
+        Args:
+            tool_name: Name of the tool
+            input_data: Tool input parameters
+
+        Returns:
+            Summarized string representation
+        """
+        if not tool_name or not input_data:
+            return ""
+
+        if tool_name == "Read":
+            path = input_data.get("file_path", "")
+            return str(path)[-60:] if len(str(path)) > 60 else str(path)
+
+        elif tool_name == "Write":
+            path = input_data.get("file_path", "")
+            content_len = len(input_data.get("content", ""))
+            return f"{path} ({content_len} chars)"
+
+        elif tool_name == "Edit":
+            path = input_data.get("file_path", "")
+            return str(path)[-50:] if len(str(path)) > 50 else str(path)
+
+        elif tool_name == "Bash":
+            cmd = input_data.get("command", "")
+            return (cmd[:60] + "...") if len(cmd) > 60 else cmd
+
+        elif tool_name == "Grep":
+            pattern = input_data.get("pattern", "")
+            path = input_data.get("path", ".")
+            return f"'{pattern}' in {path}"
+
+        elif tool_name == "Glob":
+            pattern = input_data.get("pattern", "")
+            return pattern
+
+        elif tool_name == "WebSearch":
+            query = input_data.get("query", "")
+            return f'"{query}"'
+
+        elif tool_name == "WebFetch":
+            url = input_data.get("url", "")
+            return url[:60] if len(url) > 60 else url
+
+        elif tool_name == "Task":
+            desc = input_data.get("description", "")
+            return desc[:40] if len(desc) > 40 else desc
+
+        elif tool_name == "AskUserQuestion":
+            # Don't summarize - NEEDS_INPUT event handles display
+            return ""
+
+        elif tool_name.startswith("ralph_"):
+            # Ralph MCP tools
+            return json.dumps(input_data)[:50]
+
+        else:
+            # Generic summary
+            if self.verbosity >= 2:
+                return json.dumps(input_data)[:80]
+            return ""
+
+    def get_summary(self) -> str:
+        """Get a summary of the execution statistics.
+
+        Returns:
+            Formatted summary string
+        """
+        return (
+            f"Total: {self._iteration_count} iterations, "
+            f"{self._total_tokens:,} tokens, ${self._total_cost:.4f}"
+        )
+
+    def reset(self) -> None:
+        """Reset the display state for a new execution."""
+        self.current_text = ""
+        self.tool_stack = []
+        self._iteration_count = 0
+        self._total_cost = 0.0
+        self._total_tokens = 0
 
 
 def _resolve_project_root(project_root: str) -> Path:
@@ -819,8 +1072,17 @@ def run(
 def discover(
     project_root: str = typer.Option(".", "--project-root", "-p", help="Project root directory"),
     goal: str = typer.Option(None, "--goal", "-g", help="Project goal"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output (show LLM text)"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Quiet output (errors only)"),
 ) -> None:
-    """Run the Discovery phase with JTBD framework."""
+    """Run the Discovery phase with JTBD framework.
+
+    This command runs interactively, asking questions to clarify requirements
+    and creating specification files in the specs/ directory.
+
+    Use --verbose to see the full LLM output as it streams.
+    Use --quiet to suppress all output except errors.
+    """
     try:
         path = _resolve_project_root(project_root)
     except typer.BadParameter as e:
@@ -831,38 +1093,84 @@ def discover(
         console.print(f"[yellow]Ralph not initialized in {path}[/yellow]")
         raise typer.Exit(1)
 
-    try:
-        state = load_state(path)
-        state.current_phase = Phase.DISCOVERY
-        save_state(state, path)
+    # Determine verbosity level
+    verbosity = 0 if quiet else (2 if verbose else 1)
 
-        console.print(Panel("[bold cyan]Discovery Phase[/bold cyan]", border_style="cyan"))
-        if goal:
-            console.print(f"[bold]Goal:[/bold] {goal}")
+    async def run_streaming_discovery() -> bool:
+        """Run discovery with streaming output."""
+        display = RalphLiveDisplay(console, verbosity=verbosity)
 
-        # Execute discovery phase
-        executor = DiscoveryExecutor(path)
-        result = asyncio.run(executor.execute(initial_goal=goal))
+        try:
+            state = load_state(path)
+            state.current_phase = Phase.DISCOVERY
+            save_state(state, path)
 
-        if result.success:
-            console.print("[green]Discovery complete![/green]")
-            if result.artifacts.get("specs_created"):
-                specs = ", ".join(result.artifacts["specs_created"])
-                console.print(f"[dim]Created specs: {specs}[/dim]")
-        else:
-            console.print(f"[red]Discovery failed: {result.error}[/red]")
-            raise typer.Exit(1)
+            if verbosity >= 1:
+                console.print(Panel("[bold cyan]Discovery Phase[/bold cyan]", border_style="cyan"))
+                if goal:
+                    console.print(f"[bold]Goal:[/bold] {goal}\n")
 
-    except (StateNotFoundError, CorruptedStateError) as e:
-        console.print(f"[red]Error: {e}[/red]")
-        raise typer.Exit(1) from None
+            # Execute discovery phase with streaming
+            executor = DiscoveryExecutor(path)
+            gen = executor.stream_execution(initial_goal=goal)
+
+            # Start the generator
+            event = await gen.asend(None)
+
+            while True:
+                try:
+                    # Handle event and get potential user input
+                    user_input = display.handle_event(event)
+
+                    # Send user input back (if any) and get next event
+                    event = await gen.asend(user_input)
+
+                except StopAsyncIteration:
+                    break
+
+            # Show summary
+            if verbosity >= 1:
+                console.print("\n[green]Discovery complete![/green]")
+                console.print(f"[dim]{display.get_summary()}[/dim]")
+
+                # List created specs
+                specs_dir = path / "specs"
+                if specs_dir.exists():
+                    specs = [f.name for f in specs_dir.glob("*.md")]
+                    if specs:
+                        console.print(f"[dim]Created specs: {', '.join(specs)}[/dim]")
+
+            return True
+
+        except (StateNotFoundError, CorruptedStateError) as e:
+            console.print(f"[red]Error: {e}[/red]")
+            return False
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Discovery interrupted by user[/yellow]")
+            return False
+        except Exception as e:
+            console.print(f"[red]Discovery failed: {e}[/red]")
+            return False
+
+    success = asyncio.run(run_streaming_discovery())
+    if not success:
+        raise typer.Exit(1)
 
 
 @app.command()
 def plan(
     project_root: str = typer.Option(".", "--project-root", "-p", help="Project root directory"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output (show LLM text)"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Quiet output (errors only)"),
 ) -> None:
-    """Run the Planning phase with gap analysis."""
+    """Run the Planning phase with gap analysis.
+
+    This command analyzes specs and creates an implementation plan with
+    sized, prioritized tasks.
+
+    Use --verbose to see the full LLM output as it streams.
+    Use --quiet to suppress all output except errors.
+    """
     try:
         path = _resolve_project_root(project_root)
     except typer.BadParameter as e:
@@ -873,36 +1181,82 @@ def plan(
         console.print(f"[yellow]Ralph not initialized in {path}[/yellow]")
         raise typer.Exit(1)
 
-    try:
-        state = load_state(path)
-        state.current_phase = Phase.PLANNING
-        save_state(state, path)
+    # Determine verbosity level
+    verbosity = 0 if quiet else (2 if verbose else 1)
 
-        console.print(Panel("[bold blue]Planning Phase[/bold blue]", border_style="blue"))
+    async def run_streaming_planning() -> bool:
+        """Run planning with streaming output."""
+        display = RalphLiveDisplay(console, verbosity=verbosity)
 
-        # Execute planning phase
-        executor = PlanningExecutor(path)
-        result = asyncio.run(executor.execute())
+        try:
+            state = load_state(path)
+            state.current_phase = Phase.PLANNING
+            save_state(state, path)
 
-        if result.success:
-            console.print("[green]Planning complete![/green]")
-            if result.artifacts.get("tasks_created"):
-                console.print(f"[dim]Created {result.artifacts['tasks_created']} tasks[/dim]")
-        else:
-            console.print(f"[red]Planning failed: {result.error}[/red]")
-            raise typer.Exit(1)
+            if verbosity >= 1:
+                console.print(Panel("[bold blue]Planning Phase[/bold blue]", border_style="blue"))
 
-    except (StateNotFoundError, CorruptedStateError) as e:
-        console.print(f"[red]Error: {e}[/red]")
-        raise typer.Exit(1) from None
+            # Execute planning phase with streaming
+            executor = PlanningExecutor(path)
+            gen = executor.stream_execution()
+
+            # Start the generator
+            event = await gen.asend(None)
+
+            while True:
+                try:
+                    # Handle event and get potential user input
+                    user_input = display.handle_event(event)
+
+                    # Send user input back (if any) and get next event
+                    event = await gen.asend(user_input)
+
+                except StopAsyncIteration:
+                    break
+
+            # Show summary
+            if verbosity >= 1:
+                console.print("\n[green]Planning complete![/green]")
+                console.print(f"[dim]{display.get_summary()}[/dim]")
+
+                # List created tasks
+                if plan_exists(path):
+                    plan = load_plan(path)
+                    if plan.tasks:
+                        console.print(f"[dim]Created {len(plan.tasks)} tasks[/dim]")
+
+            return True
+
+        except (StateNotFoundError, CorruptedStateError) as e:
+            console.print(f"[red]Error: {e}[/red]")
+            return False
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Planning interrupted by user[/yellow]")
+            return False
+        except Exception as e:
+            console.print(f"[red]Planning failed: {e}[/red]")
+            return False
+
+    success = asyncio.run(run_streaming_planning())
+    if not success:
+        raise typer.Exit(1)
 
 
 @app.command()
 def build(
     project_root: str = typer.Option(".", "--project-root", "-p", help="Project root directory"),
     task_id: str = typer.Option(None, "--task", "-t", help="Specific task to work on"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output (show LLM text)"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Quiet output (errors only)"),
 ) -> None:
-    """Run the Building phase with iterative task execution."""
+    """Run the Building phase with iterative task execution.
+
+    This command implements tasks from the plan using TDD and backpressure.
+    It can target a specific task with --task or work through all pending tasks.
+
+    Use --verbose to see the full LLM output as it streams.
+    Use --quiet to suppress all output except errors.
+    """
     try:
         path = _resolve_project_root(project_root)
     except typer.BadParameter as e:
@@ -913,39 +1267,80 @@ def build(
         console.print(f"[yellow]Ralph not initialized in {path}[/yellow]")
         raise typer.Exit(1)
 
-    try:
-        state = load_state(path)
-        state.current_phase = Phase.BUILDING
-        save_state(state, path)
+    # Determine verbosity level
+    verbosity = 0 if quiet else (2 if verbose else 1)
 
-        console.print(Panel("[bold green]Building Phase[/bold green]", border_style="green"))
+    async def run_streaming_building() -> bool:
+        """Run building with streaming output."""
+        display = RalphLiveDisplay(console, verbosity=verbosity)
 
-        if task_id:
-            console.print(f"[bold]Target task:[/bold] {task_id}")
+        try:
+            state = load_state(path)
+            state.current_phase = Phase.BUILDING
+            save_state(state, path)
 
-        # Execute building phase
-        executor = BuildingExecutor(path)
-        result = asyncio.run(executor.execute(target_task_id=task_id))
+            if verbosity >= 1:
+                console.print(
+                    Panel("[bold green]Building Phase[/bold green]", border_style="green")
+                )
+                if task_id:
+                    console.print(f"[bold]Target task:[/bold] {task_id}\n")
 
-        if result.success:
-            console.print("[green]Building complete![/green]")
-            tasks = result.tasks_completed
-            iters = result.iterations_run
-            console.print(f"[dim]Completed {tasks} tasks in {iters} iterations[/dim]")
-        else:
-            console.print(f"[red]Building failed: {result.error}[/red]")
-            raise typer.Exit(1)
+            # Execute building phase with streaming
+            executor = BuildingExecutor(path)
+            gen = executor.stream_execution(target_task_id=task_id)
 
-    except (StateNotFoundError, CorruptedStateError) as e:
-        console.print(f"[red]Error: {e}[/red]")
-        raise typer.Exit(1) from None
+            # Start the generator
+            event = await gen.asend(None)
+
+            while True:
+                try:
+                    # Handle event and get potential user input
+                    user_input = display.handle_event(event)
+
+                    # Send user input back (if any) and get next event
+                    event = await gen.asend(user_input)
+
+                except StopAsyncIteration:
+                    break
+
+            # Show summary
+            if verbosity >= 1:
+                console.print("\n[green]Building complete![/green]")
+                console.print(f"[dim]{display.get_summary()}[/dim]")
+
+            return True
+
+        except (StateNotFoundError, CorruptedStateError) as e:
+            console.print(f"[red]Error: {e}[/red]")
+            return False
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Building interrupted by user[/yellow]")
+            return False
+        except Exception as e:
+            console.print(f"[red]Building failed: {e}[/red]")
+            return False
+
+    success = asyncio.run(run_streaming_building())
+    if not success:
+        raise typer.Exit(1)
 
 
 @app.command()
 def validate(
     project_root: str = typer.Option(".", "--project-root", "-p", help="Project root directory"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output (show LLM text)"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Quiet output (errors only)"),
 ) -> None:
-    """Run the Validation phase with verification."""
+    """Run the Validation phase with verification.
+
+    This command runs comprehensive verification including tests, linting,
+    type checking, and spec compliance. It may require human approval
+    if configured.
+
+    Use --verbose to see the full LLM output as it streams.
+    Use --quiet to suppress all output except errors.
+    """
     try:
         path = _resolve_project_root(project_root)
     except typer.BadParameter as e:
@@ -956,28 +1351,61 @@ def validate(
         console.print(f"[yellow]Ralph not initialized in {path}[/yellow]")
         raise typer.Exit(1)
 
-    try:
-        state = load_state(path)
-        state.current_phase = Phase.VALIDATION
-        save_state(state, path)
+    # Determine verbosity level
+    verbosity = 0 if quiet else (2 if verbose else 1)
 
-        console.print(Panel("[bold yellow]Validation Phase[/bold yellow]", border_style="yellow"))
+    async def run_streaming_validation() -> bool:
+        """Run validation with streaming output."""
+        display = RalphLiveDisplay(console, verbosity=verbosity)
 
-        # Execute validation phase
-        executor = ValidationExecutor(path)
-        result = asyncio.run(executor.execute())
+        try:
+            state = load_state(path)
+            state.current_phase = Phase.VALIDATION
+            save_state(state, path)
 
-        if result.success:
-            console.print("[green]Validation complete![/green]")
-            console.print("[dim]All checks passed[/dim]")
-        else:
-            msg = result.error or "Some checks failed"
-            console.print(f"[yellow]Validation incomplete: {msg}[/yellow]")
-            raise typer.Exit(1)
+            if verbosity >= 1:
+                console.print(
+                    Panel("[bold yellow]Validation Phase[/bold yellow]", border_style="yellow")
+                )
 
-    except (StateNotFoundError, CorruptedStateError) as e:
-        console.print(f"[red]Error: {e}[/red]")
-        raise typer.Exit(1) from None
+            # Execute validation phase with streaming
+            executor = ValidationExecutor(path)
+            gen = executor.stream_execution()
+
+            # Start the generator
+            event = await gen.asend(None)
+
+            while True:
+                try:
+                    # Handle event and get potential user input
+                    user_input = display.handle_event(event)
+
+                    # Send user input back (if any) and get next event
+                    event = await gen.asend(user_input)
+
+                except StopAsyncIteration:
+                    break
+
+            # Show summary
+            if verbosity >= 1:
+                console.print("\n[green]Validation complete![/green]")
+                console.print(f"[dim]{display.get_summary()}[/dim]")
+
+            return True
+
+        except (StateNotFoundError, CorruptedStateError) as e:
+            console.print(f"[red]Error: {e}[/red]")
+            return False
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Validation interrupted by user[/yellow]")
+            return False
+        except Exception as e:
+            console.print(f"[red]Validation failed: {e}[/red]")
+            return False
+
+    success = asyncio.run(run_streaming_validation())
+    if not success:
+        raise typer.Exit(1)
 
 
 @app.command("regenerate-plan")
