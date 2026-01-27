@@ -21,6 +21,7 @@ from ralph.events import (
     info_event,
     phase_change_event,
 )
+from ralph.memory import MemoryManager
 from ralph.models import ImplementationPlan, Phase, RalphState, Task
 from ralph.persistence import load_memory, load_plan, load_state, save_memory, save_plan, save_state
 from ralph.phases import get_phase_prompt
@@ -80,6 +81,7 @@ class PhaseExecutor(ABC):
         self._client: RalphSDKClient | None = None
         self._plan: ImplementationPlan | None = None
         self.user_input_callbacks = user_input_callbacks
+        self._memory_manager: MemoryManager | None = None
 
     @property
     def state(self) -> RalphState:
@@ -105,6 +107,13 @@ class PhaseExecutor(ABC):
                 user_input_callbacks=self.user_input_callbacks,
             )
         return self._client
+
+    @property
+    def memory_manager(self) -> MemoryManager:
+        """Get memory manager, creating if needed."""
+        if self._memory_manager is None:
+            self._memory_manager = MemoryManager(self.project_root)
+        return self._memory_manager
 
     @property
     @abstractmethod
@@ -135,10 +144,18 @@ class PhaseExecutor(ABC):
     def _load_memory(self) -> str | None:
         """Load memory content for injection into prompts.
 
+        Uses MemoryManager to build active memory from multiple sources
+        (phase memory, recent iterations, task state) rather than just
+        reading the static MEMORY.md file.
+
         Returns:
-            Memory content from .ralph/MEMORY.md or None if not found
+            Combined memory content or None if no memory available
         """
-        return load_memory(self.project_root)
+        try:
+            return self.memory_manager.build_active_memory(self.state, self.plan)
+        except Exception:
+            # Fallback to static memory file if MemoryManager fails
+            return load_memory(self.project_root)
 
     def _inject_memory_into_prompt(self, prompt: str, memory: str | None) -> str:
         """Inject memory section into system prompt.
@@ -191,6 +208,49 @@ class PhaseExecutor(ABC):
         # Clear pending update
         self.state.pending_memory_update = None
         self.save_state()
+
+    def _capture_iteration_memory(self, result: IterationResult) -> None:
+        """Capture memory at end of iteration (harness-controlled).
+
+        This is called automatically at the end of each iteration to
+        create a deterministic record of the iteration's outcomes.
+        Unlike ralph_update_memory which relies on LLM decisions,
+        this is harness-controlled and always runs.
+
+        Args:
+            result: The result from the completed iteration
+        """
+        with contextlib.suppress(Exception):
+            self.memory_manager.capture_iteration_memory(
+                state=self.state,
+                plan=self.plan,
+                result=result,
+            )
+
+    def _capture_phase_transition_memory(
+        self,
+        old_phase: Phase,
+        new_phase: Phase,
+        artifacts: dict[str, Any],
+    ) -> None:
+        """Capture memory at phase transition (harness-controlled).
+
+        Called when transitioning between phases to preserve context
+        for the next phase. This is deterministic and always runs.
+
+        Args:
+            old_phase: Phase being completed
+            new_phase: Phase being entered
+            artifacts: Phase-specific artifacts (specs, tasks, etc.)
+        """
+        with contextlib.suppress(Exception):
+            self.memory_manager.capture_phase_transition_memory(
+                state=self.state,
+                plan=self.plan,
+                old_phase=old_phase,
+                new_phase=new_phase,
+                artifacts=artifacts,
+            )
 
     @abstractmethod
     async def execute(self, **kwargs: Any) -> PhaseExecutionResult:
@@ -254,8 +314,11 @@ class PhaseExecutor(ABC):
         # Save state after each iteration
         self.save_state()
 
-        # Flush any pending memory updates
+        # Flush any pending memory updates (LLM-triggered)
         self._flush_pending_memory()
+
+        # Capture iteration memory (harness-controlled, deterministic)
+        self._capture_iteration_memory(result)
 
         return result
 
@@ -344,9 +407,10 @@ class PhaseExecutor(ABC):
             # changes, our save_state() call will overwrite the completion signal.
             try:
                 disk_state = load_state(self.project_root)
-                for phase, signal in disk_state.completion_signals.items():
-                    if phase not in self._state.completion_signals:
-                        self._state.completion_signals[phase] = signal
+                if self._state is not None:
+                    for phase, signal in disk_state.completion_signals.items():
+                        if phase not in self._state.completion_signals:
+                            self._state.completion_signals[phase] = signal
             except Exception:
                 pass  # If reload fails, continue with existing state
 
@@ -361,8 +425,19 @@ class PhaseExecutor(ABC):
             # Save state after iteration
             self.save_state()
 
-            # Flush any pending memory updates
+            # Flush any pending memory updates (LLM-triggered)
             self._flush_pending_memory()
+
+            # Capture iteration memory (harness-controlled, deterministic)
+            # Create a minimal IterationResult for memory capture
+            stream_result = IterationResult(
+                success=True,
+                final_text="",
+                cost_usd=iteration_cost,
+                tokens_used=iteration_tokens,
+                task_completed=task_completed,
+            )
+            self._capture_iteration_memory(stream_result)
 
 
 class DiscoveryExecutor(PhaseExecutor):
@@ -582,6 +657,20 @@ Start by asking the user what they want to build."""
                 missing_str = ", ".join(missing_docs)
                 completion_notes += f" (WARNING: Missing required documents: {missing_str})"
 
+            # Capture phase transition memory (harness-controlled)
+            artifacts = {
+                "specs_created": specs_created,
+                "prd_created": prd_exists,
+                "architecture_created": arch_exists,
+                "spec_files": spec_files,
+                "validation": validation_result,
+            }
+            self._capture_phase_transition_memory(
+                old_phase=Phase.DISCOVERY,
+                new_phase=Phase.PLANNING,
+                artifacts=artifacts,
+            )
+
             return PhaseExecutionResult(
                 success=True,
                 phase=self.phase,
@@ -590,13 +679,7 @@ Start by asking the user what they want to build."""
                 tokens_used=total_tokens,
                 needs_phase_transition=True,
                 next_phase=Phase.PLANNING,
-                artifacts={
-                    "specs_created": specs_created,
-                    "prd_created": prd_exists,
-                    "architecture_created": arch_exists,
-                    "spec_files": spec_files,
-                    "validation": validation_result,
-                },
+                artifacts=artifacts,
                 completion_notes=completion_notes,
             )
 
@@ -751,6 +834,18 @@ Start by asking the user what they want to build."""
                 yield info_event(
                     f"WARNING: Missing required documents: {', '.join(missing_docs)}"
                 )
+
+            # Capture phase transition memory (harness-controlled)
+            self._capture_phase_transition_memory(
+                old_phase=Phase.DISCOVERY,
+                new_phase=Phase.PLANNING,
+                artifacts={
+                    "specs_created": specs_created,
+                    "prd_exists": prd_exists,
+                    "architecture_exists": arch_exists,
+                    "spec_files": spec_files,
+                },
+            )
 
             # Yield completion info
             yield info_event(
@@ -907,6 +1002,13 @@ Start by reading the specs and analyzing the codebase."""
             self._plan = None
             task_count = len(self.plan.tasks)
 
+            # Capture phase transition memory (harness-controlled)
+            self._capture_phase_transition_memory(
+                old_phase=Phase.PLANNING,
+                new_phase=Phase.BUILDING,
+                artifacts={"tasks_created": task_count},
+            )
+
             return PhaseExecutionResult(
                 success=True,
                 phase=self.phase,
@@ -1021,6 +1123,13 @@ Start by reading the specs and analyzing the codebase."""
             # Get final task count
             self._plan = None
             task_count = len(self.plan.tasks)
+
+            # Capture phase transition memory (harness-controlled)
+            self._capture_phase_transition_memory(
+                old_phase=Phase.PLANNING,
+                new_phase=Phase.BUILDING,
+                artifacts={"tasks_created": task_count},
+            )
 
             # Yield completion info
             yield info_event(
@@ -1179,6 +1288,14 @@ Start implementing now."""
             # Check if all tasks complete
             self._plan = None
             all_complete = self.plan.pending_count == 0
+
+            # Capture phase transition memory if transitioning (harness-controlled)
+            if all_complete:
+                self._capture_phase_transition_memory(
+                    old_phase=Phase.BUILDING,
+                    new_phase=Phase.VALIDATION,
+                    artifacts={"tasks_completed": tasks_completed},
+                )
 
             return PhaseExecutionResult(
                 success=True,
@@ -1350,6 +1467,14 @@ Start implementing now."""
             self._plan = None
             all_complete = self.plan.pending_count == 0
 
+            # Capture phase transition memory if transitioning (harness-controlled)
+            if all_complete:
+                self._capture_phase_transition_memory(
+                    old_phase=Phase.BUILDING,
+                    new_phase=Phase.VALIDATION,
+                    artifacts={"tasks_completed": tasks_completed},
+                )
+
             # Yield completion info
             yield info_event(
                 f"Building complete: {tasks_completed} tasks completed, "
@@ -1424,15 +1549,60 @@ class ValidationExecutor(PhaseExecutor):
 
         return response in ("y", "yes")
 
+    def _detect_validation_progress(self, current_text: str, previous_text: str) -> bool:
+        """Detect if validation made progress this iteration.
+
+        Progress is indicated by:
+        - Running verification commands (pytest, ruff, mypy)
+        - Fixing issues (keywords like "fixed", "resolved")
+        - Substantially different output (not stuck on same error)
+
+        Args:
+            current_text: Output from current iteration
+            previous_text: Output from previous iteration
+
+        Returns:
+            True if progress was made, False if stagnant
+        """
+        progress_keywords = [
+            "running pytest",
+            "running ruff",
+            "running mypy",
+            "fixed",
+            "resolved",
+            "corrected",
+            "updated",
+            "test passed",
+            "tests passed",
+            "no errors",
+            "all passed",
+            "uv run pytest",
+            "uv run ruff",
+            "uv run mypy",
+        ]
+        current_lower = current_text.lower()
+        for kw in progress_keywords:
+            if kw in current_lower:
+                return True
+
+        # Check if output changed substantially (not stuck on same error)
+        if previous_text:
+            current_words = set(current_text.split())
+            prev_words = set(previous_text.split())
+            if current_words and len(current_words & prev_words) / len(current_words) < 0.7:
+                return True
+
+        return False
+
     async def execute(
         self,
-        max_iterations: int = 20,
+        max_iterations: int = 10,
         **kwargs: Any,
     ) -> PhaseExecutionResult:
         """Execute the Validation phase.
 
         Args:
-            max_iterations: Maximum iterations for validation
+            max_iterations: Maximum iterations for validation (default 10 per SPEC-001)
 
         Returns:
             PhaseExecutionResult with validation status
@@ -1441,6 +1611,7 @@ class ValidationExecutor(PhaseExecutor):
         total_cost = 0.0
         total_tokens = 0
         validation_results: dict[str, bool] = {}
+        previous_text = ""  # Track for progress detection
 
         prompt = """You are in the VALIDATION phase.
 
@@ -1471,7 +1642,12 @@ If everything passes, confirm validation is complete."""
                 total_cost += result.cost_usd
                 total_tokens += result.tokens_used
 
+                # Record success/failure for circuit breaker
                 if not result.success:
+                    self.state.circuit_breaker.record_failure(
+                        result.error or "validation_iteration_failed"
+                    )
+                    self.save_state()
                     return PhaseExecutionResult(
                         success=False,
                         phase=self.phase,
@@ -1479,6 +1655,29 @@ If everything passes, confirm validation is complete."""
                         cost_usd=total_cost,
                         tokens_used=total_tokens,
                         error=result.error,
+                    )
+                else:
+                    progress = self._detect_validation_progress(
+                        result.final_text, previous_text
+                    )
+                    self.state.circuit_breaker.record_success(
+                        tasks_completed=0, progress_made=progress
+                    )
+                    previous_text = result.final_text
+
+                self.save_state()
+
+                # Check circuit breaker - halt if tripped
+                should_halt, halt_reason = self.state.should_halt()
+                if should_halt:
+                    return PhaseExecutionResult(
+                        success=False,
+                        phase=self.phase,
+                        iterations_run=iterations_run,
+                        cost_usd=total_cost,
+                        tokens_used=total_tokens,
+                        error=f"Circuit breaker tripped: {halt_reason}",
+                        artifacts={"validation_results": validation_results},
                     )
 
                 # Check for completion signal
@@ -1541,7 +1740,7 @@ If everything passes, confirm validation is complete."""
 
     async def stream_execution(
         self,
-        max_iterations: int = 20,
+        max_iterations: int = 10,
         **kwargs: Any,
     ) -> AsyncGenerator[StreamEvent, str | None]:
         """Stream events during Validation phase execution.
@@ -1553,18 +1752,19 @@ If everything passes, confirm validation is complete."""
         the caller to send() the user's approval response back.
 
         Args:
-            max_iterations: Maximum iterations for validation
+            max_iterations: Maximum iterations for validation (default 10 per SPEC-001)
 
         Yields:
             StreamEvent objects for all execution events
         """
-        from ralph.events import error_event, needs_input_event
+        from ralph.events import error_event, needs_input_event, warning_event
 
         iterations_run = 0
         total_cost = 0.0
         total_tokens = 0
         validation_results: dict[str, bool] = {}
         last_final_text = ""
+        previous_text = ""  # Track for progress detection
 
         prompt = """You are in the VALIDATION phase.
 
@@ -1599,6 +1799,8 @@ If everything passes, confirm validation is complete."""
 
                 user_response: str | None = None
                 event = await gen.asend(None)  # Start iteration generator
+                iteration_success = True
+                iteration_error: str | None = None
 
                 while True:
                     try:
@@ -1607,6 +1809,8 @@ If everything passes, confirm validation is complete."""
                             total_cost += event.data.get("cost_usd", 0.0)
                             total_tokens += event.data.get("tokens_used", 0)
                             last_final_text = event.data.get("final_text", "")
+                            iteration_success = event.data.get("success", True)
+                            iteration_error = event.data.get("error")
                             iterations_run += 1
 
                         # Yield event to caller and get potential user input
@@ -1617,6 +1821,30 @@ If everything passes, confirm validation is complete."""
 
                     except StopAsyncIteration:
                         break
+
+                # Record success/failure for circuit breaker
+                if not iteration_success:
+                    self.state.circuit_breaker.record_failure(
+                        iteration_error or "validation_iteration_failed"
+                    )
+                    yield warning_event(f"Validation iteration failed: {iteration_error}")
+                else:
+                    progress = self._detect_validation_progress(last_final_text, previous_text)
+                    self.state.circuit_breaker.record_success(
+                        tasks_completed=0, progress_made=progress
+                    )
+                    previous_text = last_final_text
+
+                self.save_state()
+
+                # Check circuit breaker - halt if tripped
+                should_halt, halt_reason = self.state.should_halt()
+                if should_halt:
+                    yield error_event(
+                        f"Circuit breaker tripped: {halt_reason}",
+                        error_type="circuit_breaker",
+                    )
+                    return
 
                 # Check for completion signal
                 self._state = None  # Force reload

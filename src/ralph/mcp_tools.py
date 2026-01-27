@@ -149,6 +149,38 @@ def _validate_verification_criteria(criteria: Any) -> list[str] | None:
     return validated if validated else None
 
 
+def _validate_spec_files(spec_files: Any) -> list[str] | None:
+    """Validate and normalize spec_files to a list of file paths."""
+    if spec_files is None:
+        return None
+
+    # Handle comma-separated string
+    if isinstance(spec_files, str):
+        if not spec_files.strip():
+            return None
+        spec_list = [s.strip() for s in spec_files.split(",") if s.strip()]
+        if not spec_list:
+            return None
+        spec_files = spec_list
+
+    if not isinstance(spec_files, list):
+        raise ValidationError(
+            f"spec_files must be a list or comma-separated string, "
+            f"got {type(spec_files).__name__}"
+        )
+
+    validated: list[str] = []
+    for spec in spec_files:
+        if not isinstance(spec, str):
+            raise ValidationError(
+                f"Each spec file must be a string, got {type(spec).__name__}"
+            )
+        if spec.strip():
+            validated.append(spec.strip())
+
+    return validated if validated else None
+
+
 # Global tools instance - will be set by create_ralph_mcp_server
 _ralph_tools: RalphTools | None = None
 
@@ -321,6 +353,7 @@ async def ralph_get_state_summary(args: dict[str, Any]) -> dict[str, Any]:
         "dependencies": list,
         "verification_criteria": list,
         "estimated_tokens": int,
+        "spec_files": list,
     },
 )
 async def ralph_add_task(args: dict[str, Any]) -> dict[str, Any]:
@@ -337,6 +370,7 @@ async def ralph_add_task(args: dict[str, Any]) -> dict[str, Any]:
         estimated_tokens = _validate_tokens_used(args.get("estimated_tokens", 30_000)) or 30_000
         dependencies = _validate_dependencies(args.get("dependencies"))
         verification_criteria = _validate_verification_criteria(args.get("verification_criteria"))
+        spec_files = _validate_spec_files(args.get("spec_files"))
     except ValidationError as e:
         return {"content": [{"type": "text", "text": f"Validation error: {e}"}], "is_error": True}
 
@@ -348,6 +382,7 @@ async def ralph_add_task(args: dict[str, Any]) -> dict[str, Any]:
         dependencies=dependencies,
         verification_criteria=verification_criteria,
         estimated_tokens=estimated_tokens,
+        spec_files=spec_files,
     )
     return _format_result(result)
 

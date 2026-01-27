@@ -497,4 +497,4 @@ class TestSignalPhaseComplete:
     def test_signal_phase_complete_is_class_method(self) -> None:
         """Verify signal_phase_complete is a method of RalphTools class."""
         assert hasattr(RalphTools, "signal_phase_complete")
-        assert callable(getattr(RalphTools, "signal_phase_complete"))
+        assert callable(RalphTools.signal_phase_complete)

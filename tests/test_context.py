@@ -407,9 +407,9 @@ class TestShouldTriggerHandoff:
     """Tests for should_trigger_handoff."""
 
     def test_triggers_at_threshold(self, project_path: Path) -> None:
-        """Triggers at context budget threshold."""
+        """Triggers at context budget threshold (80% per SPEC-005)."""
         state = RalphState(project_root=project_path)
-        state.context_budget.add_usage(120_001)  # > 60%
+        state.context_budget.add_usage(160_001)  # > 80% (SPEC-005 threshold)
 
         should_trigger, reason = should_trigger_handoff(state)
         assert should_trigger is True

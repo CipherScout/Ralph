@@ -87,7 +87,6 @@ class TestThinkingSpinner:
 
         spinner.start()
         try:
-            thread1 = spinner._animation_thread
             spinner.start()  # Should handle gracefully
             # Should either be same thread or properly replaced
             assert spinner._animation_thread is not None

@@ -570,6 +570,52 @@ class TestRalphAddTask:
         assert "is_error" in result
 
 
+    @pytest.mark.asyncio
+    async def test_adds_task_with_spec_files(self) -> None:
+        """Adds task with spec_files successfully."""
+        mock_tools = MagicMock()
+        mock_tools.add_task.return_value = ToolResult(
+            success=True, content="Task added"
+        )
+
+        with patch("ralph.mcp_tools._ralph_tools", mock_tools):
+            result = await ralph_add_task.handler(
+                {
+                    "task_id": "task-new",
+                    "description": "New task description",
+                    "priority": 2,
+                    "spec_files": ["specs/SPEC-001-auth.md", "specs/PRD.md"],
+                }
+            )
+
+        assert "content" in result
+        mock_tools.add_task.assert_called_once()
+        call_kwargs = mock_tools.add_task.call_args.kwargs
+        assert call_kwargs["spec_files"] == ["specs/SPEC-001-auth.md", "specs/PRD.md"]
+
+    @pytest.mark.asyncio
+    async def test_adds_task_with_comma_separated_spec_files(self) -> None:
+        """Adds task with comma-separated spec_files string."""
+        mock_tools = MagicMock()
+        mock_tools.add_task.return_value = ToolResult(
+            success=True, content="Task added"
+        )
+
+        with patch("ralph.mcp_tools._ralph_tools", mock_tools):
+            result = await ralph_add_task.handler(
+                {
+                    "task_id": "task-new",
+                    "description": "New task description",
+                    "priority": 2,
+                    "spec_files": "specs/SPEC-001-auth.md, specs/PRD.md",
+                }
+            )
+
+        assert "content" in result
+        call_kwargs = mock_tools.add_task.call_args.kwargs
+        assert call_kwargs["spec_files"] == ["specs/SPEC-001-auth.md", "specs/PRD.md"]
+
+
 class TestRalphIncrementRetry:
     """Tests for ralph_increment_retry tool."""
 
@@ -600,7 +646,6 @@ class TestRalphValidateDiscoveryOutputs:
     @pytest.mark.asyncio
     async def test_validates_all_documents_exist(self, tmp_path) -> None:
         """Reports success when all documents exist."""
-        from ralph.mcp_tools import _ralph_tools
         from ralph.tools import RalphTools
 
         # Create all required documents
@@ -714,7 +759,7 @@ class TestRalphSignalDiscoveryComplete:
         )
 
         with patch("ralph.mcp_tools._ralph_tools", mock_tools):
-            result = await ralph_signal_discovery_complete.handler(
+            await ralph_signal_discovery_complete.handler(
                 {
                     "summary": "Done",
                     "specs_created": [],

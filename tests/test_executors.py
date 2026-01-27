@@ -559,6 +559,180 @@ class TestValidationExecutor:
         # Not explicitly failed, but not all_passed
         assert result.success is False
 
+    @patch("ralph.executors.create_ralph_client")
+    async def test_execute_circuit_breaker_failure(
+        self, mock_create_client: MagicMock, project_path: Path
+    ) -> None:
+        """Execute fails when circuit breaker trips on consecutive failures."""
+        mock_client = MagicMock()
+        mock_client.run_iteration = AsyncMock(
+            return_value=IterationResult(
+                success=False,
+                task_completed=False,
+                task_id=None,
+                error="Test failure",
+                cost_usd=0.01,
+                tokens_used=100,
+                final_text="Tests failed",
+                needs_handoff=False,
+                metrics=IterationMetrics(),
+            )
+        )
+        mock_create_client.return_value = mock_client
+
+        executor = ValidationExecutor(project_path)
+        executor.config.validation.require_human_approval = False
+        # Pre-set circuit breaker near threshold (max is 3)
+        executor.state.circuit_breaker.failure_count = 2
+        result = await executor.execute(max_iterations=5)
+
+        assert result.success is False
+        # Early return on failed iteration (not circuit breaker trip)
+        assert result.error == "Test failure"
+
+    @patch("ralph.executors.create_ralph_client")
+    async def test_execute_circuit_breaker_stagnation(
+        self, mock_create_client: MagicMock, project_path: Path
+    ) -> None:
+        """Execute fails when circuit breaker trips on stagnation."""
+        mock_client = MagicMock()
+        # Same output every iteration = stagnation (no progress keywords)
+        mock_client.run_iteration = AsyncMock(
+            return_value=IterationResult(
+                success=True,
+                task_completed=False,
+                task_id=None,
+                error=None,
+                cost_usd=0.01,
+                tokens_used=100,
+                final_text="Checking tests...",  # Same text, no progress keywords
+                needs_handoff=False,
+                metrics=IterationMetrics(),
+            )
+        )
+        mock_create_client.return_value = mock_client
+
+        executor = ValidationExecutor(project_path)
+        executor.config.validation.require_human_approval = False
+        # Pre-set stagnation near threshold (max is 5)
+        executor.state.circuit_breaker.stagnation_count = 4
+        result = await executor.execute(max_iterations=10)
+
+        assert result.success is False
+        assert "circuit breaker" in result.error.lower()
+        assert "stagnation" in result.error.lower()
+
+    @patch("ralph.executors.create_ralph_client")
+    async def test_execute_respects_max_iterations_10(
+        self, mock_create_client: MagicMock, project_path: Path
+    ) -> None:
+        """Execute defaults to 10 max iterations per SPEC-001."""
+        mock_client = MagicMock()
+        call_count = 0
+
+        async def count_iterations(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            # Different output each time to avoid stagnation detection
+            return IterationResult(
+                success=True,
+                task_completed=False,
+                task_id=None,
+                error=None,
+                cost_usd=0.01,
+                tokens_used=100,
+                final_text=f"Running pytest iteration {call_count}... tests failing",
+                needs_handoff=False,
+                metrics=IterationMetrics(),
+            )
+
+        mock_client.run_iteration = count_iterations
+        mock_create_client.return_value = mock_client
+
+        executor = ValidationExecutor(project_path)
+        executor.config.validation.require_human_approval = False
+        result = await executor.execute()  # Use default max_iterations
+
+        assert result.iterations_run == 10  # Not 20
+
+    @patch("ralph.executors.create_ralph_client")
+    async def test_execute_cost_limit_exceeded(
+        self, mock_create_client: MagicMock, project_path: Path
+    ) -> None:
+        """Execute fails when cost limit exceeded."""
+        mock_client = MagicMock()
+        mock_client.run_iteration = AsyncMock(
+            return_value=IterationResult(
+                success=True,
+                task_completed=False,
+                task_id=None,
+                error=None,
+                cost_usd=10.0,  # High cost per iteration
+                tokens_used=1000,
+                final_text="Running pytest checks...",
+                needs_handoff=False,
+                metrics=IterationMetrics(),
+            )
+        )
+        mock_create_client.return_value = mock_client
+
+        executor = ValidationExecutor(project_path)
+        executor.config.validation.require_human_approval = False
+        executor.state.total_cost_usd = 95.0  # Near $100 limit
+        executor.state.circuit_breaker.max_cost_usd = 100.0
+        result = await executor.execute(max_iterations=5)
+
+        assert result.success is False
+        assert "cost_limit" in result.error.lower()
+
+    def test_detect_validation_progress_keywords(self, project_path: Path) -> None:
+        """Progress detection identifies verification keywords."""
+        executor = ValidationExecutor(project_path)
+
+        # Should detect progress - verification commands
+        assert executor._detect_validation_progress(
+            "Running pytest... 5 tests passed", ""
+        ) is True
+        assert executor._detect_validation_progress(
+            "uv run ruff check . found no errors", ""
+        ) is True
+        assert executor._detect_validation_progress(
+            "uv run mypy . success", ""
+        ) is True
+
+        # Should detect progress - fix keywords
+        assert executor._detect_validation_progress(
+            "Fixed the import error", ""
+        ) is True
+        assert executor._detect_validation_progress(
+            "Resolved the type mismatch", ""
+        ) is True
+
+    def test_detect_validation_progress_no_progress(self, project_path: Path) -> None:
+        """Progress detection identifies stagnation."""
+        executor = ValidationExecutor(project_path)
+
+        # Same content = no progress
+        assert executor._detect_validation_progress(
+            "Same error message", "Same error message"
+        ) is False
+
+        # Very similar content (>70% overlap) = no progress
+        assert executor._detect_validation_progress(
+            "Checking the code for errors in module foo",
+            "Checking the code for issues in module foo"
+        ) is False
+
+    def test_detect_validation_progress_text_change(self, project_path: Path) -> None:
+        """Progress detection identifies substantial text changes."""
+        executor = ValidationExecutor(project_path)
+
+        # Very different content = progress
+        assert executor._detect_validation_progress(
+            "New error: TypeError in line 50 with details about the function call",
+            "Old error: ImportError in line 10 with module information"
+        ) is True
+
 
 class TestGetExecutorForPhase:
     """Tests for get_executor_for_phase function."""
@@ -732,7 +906,6 @@ class TestCompletionSignalPreservation:
         4. The completion signal should still be present
         """
         from ralph.persistence import load_state, save_state
-        from ralph.events import StreamEventType
 
         # Track when stream_iteration yields ITERATION_END so we can
         # simulate a tool setting the completion signal before executor saves
@@ -801,8 +974,8 @@ class TestCompletionSignalPreservation:
         After the completion signal is set and preserved, stream_execution
         should detect it and yield a phase_change_event.
         """
-        from ralph.persistence import load_state, save_state
         from ralph.events import StreamEventType
+        from ralph.persistence import load_state, save_state
 
         iteration_count = [0]
 
@@ -874,7 +1047,6 @@ class TestCompletionSignalPreservation:
         should not be reset or lost due to state save race conditions.
         """
         from ralph.persistence import load_state, save_state
-        from ralph.events import StreamEventType
 
         iteration_count = [0]
 
@@ -936,7 +1108,6 @@ class TestCompletionSignalPreservation:
         CLI/orchestrator should clear it when starting the next phase.
         """
         from ralph.persistence import load_state, save_state
-        from ralph.events import StreamEventType
 
         async def mock_stream_iteration(prompt, phase, system_prompt, max_turns):
             """Mock that sets completion signal."""

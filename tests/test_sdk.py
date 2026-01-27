@@ -212,8 +212,8 @@ class TestValidateToolUseForPhase:
 
     @pytest.mark.asyncio
     async def test_validate_tool_use_wrong_phase(self) -> None:
-        """Tool not allowed in phase is blocked."""
-        # AskUserQuestion only allowed in discovery phase, not building
+        """AskUserQuestion not allowed in Building phase."""
+        # AskUserQuestion only allowed in Discovery, Planning, Validation - not Building
         result = await validate_tool_use_for_phase(
             "AskUserQuestion", {"questions": []}, Phase.BUILDING
         )

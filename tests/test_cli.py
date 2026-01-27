@@ -2,14 +2,13 @@
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from typer.testing import CliRunner
 
 from ralph.cli import app
-from ralph.events import StreamEvent, StreamEventType
 from ralph.context import load_injections
-from ralph.executors import PhaseExecutionResult
+from ralph.events import StreamEvent, StreamEventType
 from ralph.models import Phase, Task, TaskStatus
 from ralph.persistence import (
     initialize_plan,
@@ -744,6 +743,7 @@ class TestRalphLiveDisplaySpinner:
     def test_text_delta_stops_and_restarts_spinner_when_printing(self) -> None:
         """TEXT_DELTA should stop spinner to print, then restart for continued processing."""
         from rich.console import Console
+
         from ralph.cli import RalphLiveDisplay
 
         # Create a quiet console for testing
@@ -768,6 +768,7 @@ class TestRalphLiveDisplaySpinner:
     def test_text_delta_no_stop_when_low_verbosity(self) -> None:
         """TEXT_DELTA should NOT stop spinner when verbosity < 2."""
         from rich.console import Console
+
         from ralph.cli import RalphLiveDisplay
 
         console = Console(force_terminal=True, no_color=True, quiet=True)
@@ -787,6 +788,7 @@ class TestRalphLiveDisplaySpinner:
     def test_text_delta_no_stop_when_empty_text(self) -> None:
         """TEXT_DELTA should NOT stop spinner when text is empty."""
         from rich.console import Console
+
         from ralph.cli import RalphLiveDisplay
 
         console = Console(force_terminal=True, no_color=True, quiet=True)
@@ -806,6 +808,7 @@ class TestRalphLiveDisplaySpinner:
     def test_tool_use_end_restarts_spinner(self) -> None:
         """TOOL_USE_END should restart the spinner after tool completes."""
         from rich.console import Console
+
         from ralph.cli import RalphLiveDisplay
 
         console = Console(force_terminal=True, no_color=True, quiet=True)
@@ -831,6 +834,7 @@ class TestRalphLiveDisplaySpinner:
     def test_tool_use_start_starts_spinner(self) -> None:
         """TOOL_USE_START should start the spinner during tool execution."""
         from rich.console import Console
+
         from ralph.cli import RalphLiveDisplay
 
         console = Console(force_terminal=True, no_color=True, quiet=True)
@@ -854,6 +858,7 @@ class TestRalphLiveDisplaySpinner:
     def test_needs_input_restarts_spinner_after_response(self) -> None:
         """NEEDS_INPUT should restart spinner after getting user response."""
         from rich.console import Console
+
         from ralph.cli import RalphLiveDisplay
 
         console = Console(force_terminal=True, no_color=True, quiet=True)
@@ -881,6 +886,7 @@ class TestRalphLiveDisplaySpinner:
     def test_iteration_start_starts_spinner(self) -> None:
         """ITERATION_START should start the spinner."""
         from rich.console import Console
+
         from ralph.cli import RalphLiveDisplay
 
         console = Console(force_terminal=True, no_color=True, quiet=True)
@@ -901,6 +907,7 @@ class TestRalphLiveDisplaySpinner:
     def test_iteration_end_stops_spinner(self) -> None:
         """ITERATION_END should stop the spinner."""
         from rich.console import Console
+
         from ralph.cli import RalphLiveDisplay
 
         console = Console(force_terminal=True, no_color=True, quiet=True)
@@ -921,6 +928,7 @@ class TestRalphLiveDisplaySpinner:
     def test_spinner_lifecycle_through_tool_call(self) -> None:
         """Test complete spinner lifecycle: iteration -> text -> tool -> text -> end."""
         from rich.console import Console
+
         from ralph.cli import RalphLiveDisplay
 
         console = Console(force_terminal=True, no_color=True, quiet=True)

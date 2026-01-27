@@ -7,7 +7,7 @@ Ralph's phase-based architecture, tool allocation, and safety hooks.
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -36,6 +36,8 @@ from rich.prompt import Prompt
 
 from ralph.events import (
     StreamEvent,
+    context_emergency_event,
+    context_warning_event,
     error_event,
     iteration_end_event,
     iteration_start_event,
@@ -50,6 +52,7 @@ from ralph.models import Phase, RalphState
 
 if TYPE_CHECKING:
     from ralph.config import RalphConfig
+    from ralph.memory import MemoryManager
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +95,7 @@ class UserInputCallbacks:
 
 def _create_ask_user_handler(
     callbacks: UserInputCallbacks | None = None,
-) -> Callable[[dict[str, Any]], Any]:
+) -> Callable[[dict[str, Any]], Coroutine[Any, Any, PermissionResultAllow]]:
     """Create an AskUserQuestion handler with optional UI callbacks.
 
     This factory creates a handler that integrates with the CLI's spinner
@@ -260,68 +263,68 @@ def calculate_cost(input_tokens: int, output_tokens: int, model: str) -> float:
     return input_cost + output_cost
 
 
-# Tool allocation by phase
-# All phases have access to a broad set of tools to allow flexibility
-# The agent needs Bash in all phases to run commands, verify things, etc.
+# Complete list of all Claude Agent SDK built-in tools
+# Source: Claude Agent SDK ToolInput union type documentation
+ALL_SDK_TOOLS: list[str] = [
+    # File operations
+    "Read",
+    "Write",
+    "Edit",
+    "NotebookEdit",
+    # Command execution
+    "Bash",
+    "BashOutput",
+    "KillBash",
+    # File discovery and search
+    "Glob",
+    "Grep",
+    # Subagent invocation
+    "Task",
+    # Progress tracking
+    "TodoWrite",
+    # Web capabilities
+    "WebSearch",
+    "WebFetch",
+    # User interaction (not available in Building - agent should focus on implementation)
+    "AskUserQuestion",
+    # Plan mode control
+    "ExitPlanMode",
+    # MCP resource tools
+    "ListMcpResourcesTool",
+    "ReadMcpResourceTool",
+]
+
+# Tools available in Building phase - excludes AskUserQuestion
+# Building phase should focus on implementation, not asking questions
+_BUILDING_TOOLS: list[str] = [t for t in ALL_SDK_TOOLS if t != "AskUserQuestion"]
+
+# Tool allocation by phase (SPEC-002)
+# Most tools available in all phases, with specific exceptions:
+# - AskUserQuestion: Discovery, Planning, Validation only (not Building)
+# Security is enforced through hooks (bash_safety, uv_enforcement)
 PHASE_TOOLS: dict[Phase, list[str]] = {
-    Phase.DISCOVERY: [
-        "Read",
-        "Glob",
-        "Grep",
-        "WebSearch",
-        "WebFetch",
-        "Write",
-        "Edit",
-        "Task",
-        "AskUserQuestion",
-        "Bash",  # Allow running commands for exploration
-        "TodoWrite",
-    ],
-    Phase.PLANNING: [
-        "Read",
-        "Glob",
-        "Grep",
-        "WebSearch",
-        "WebFetch",
-        "Write",
-        "Edit",
-        "Task",
-        "ExitPlanMode",
-        "Bash",  # Allow running commands for analysis
-        "TodoWrite",
-    ],
-    Phase.BUILDING: [
-        "Read",
-        "Write",
-        "Edit",
-        "Bash",
-        "BashOutput",
-        "KillBash",
-        "Glob",
-        "Grep",
-        "Task",
-        "TodoWrite",
-        "WebSearch",
-        "WebFetch",
-        "NotebookEdit",
-    ],
-    Phase.VALIDATION: [
-        "Read",
-        "Glob",
-        "Grep",
-        "Bash",
-        "Task",
-        "WebSearch",
-        "WebFetch",
-        "Write",  # For creating validation reports
-        "Edit",
-    ],
+    Phase.DISCOVERY: ALL_SDK_TOOLS.copy(),
+    Phase.PLANNING: ALL_SDK_TOOLS.copy(),
+    Phase.BUILDING: _BUILDING_TOOLS.copy(),
+    Phase.VALIDATION: ALL_SDK_TOOLS.copy(),
 }
 
 
 def get_tools_for_phase(phase: Phase) -> list[str]:
-    """Get the list of allowed tools for a phase."""
-    return PHASE_TOOLS.get(phase, PHASE_TOOLS[Phase.BUILDING])
+    """Get the list of allowed tools for a phase.
+
+    Most tools are available in all phases (SPEC-002), with exceptions:
+    - AskUserQuestion: Discovery, Planning, Validation only (not Building)
+
+    Security is enforced through hooks, not tool restrictions.
+
+    Args:
+        phase: The execution phase
+
+    Returns:
+        List of tool names available for the phase
+    """
+    return PHASE_TOOLS.get(phase, ALL_SDK_TOOLS.copy())
 
 
 def calculate_max_turns(phase: Phase) -> int:
@@ -362,6 +365,7 @@ class RalphSDKClient:
         mcp_servers: dict[str, Any] | None = None,
         auto_configure: bool = True,
         user_input_callbacks: UserInputCallbacks | None = None,
+        memory_manager: MemoryManager | None = None,
     ) -> None:
         """Initialize the SDK client wrapper.
 
@@ -372,11 +376,21 @@ class RalphSDKClient:
             mcp_servers: MCP server configurations (optional)
             auto_configure: Automatically configure hooks and MCP server (default True)
             user_input_callbacks: Callbacks for user input handling (spinner control)
+            memory_manager: MemoryManager for session handoff (SPEC-004 integration)
         """
         self.state = state
         self.config = config
         self._session_id: str | None = None
         self.user_input_callbacks = user_input_callbacks
+
+        # Memory manager for context handoff (SPEC-004 + SPEC-005)
+        if memory_manager is not None:
+            self.memory_manager = memory_manager
+        else:
+            # Lazy import to avoid circular dependencies
+            from ralph.memory import MemoryManager
+
+            self.memory_manager = MemoryManager(state.project_root)
 
         # Auto-configure hooks and MCP server if not provided
         if auto_configure:
@@ -511,14 +525,22 @@ class RalphSDKClient:
                                             "verification_notes"
                                         )
 
-                    # Process result messages for token counts
-                    if isinstance(msg, ResultMessage) and hasattr(msg, "usage"):
-                        usage = msg.usage
-                        if usage is not None:
-                            if hasattr(usage, "input_tokens"):
-                                metrics.input_tokens += usage.input_tokens
-                            if hasattr(usage, "output_tokens"):
-                                metrics.output_tokens += usage.output_tokens
+                    # Process result messages for token counts and cost (SPEC-005)
+                    # Note: SDK returns usage as a dict, not an object
+                    if isinstance(msg, ResultMessage):
+                        # Extract cost directly from SDK if available
+                        if hasattr(msg, "total_cost_usd") and msg.total_cost_usd:
+                            metrics.cost_usd = msg.total_cost_usd
+
+                        # Extract tokens from usage dict
+                        if hasattr(msg, "usage") and msg.usage is not None:
+                            usage = msg.usage
+                            metrics.input_tokens += usage.get("input_tokens", 0)
+                            metrics.output_tokens += usage.get("output_tokens", 0)
+                            # Include cache read tokens in input count
+                            metrics.input_tokens += usage.get(
+                                "cache_read_input_tokens", 0
+                            )
 
         except ConnectionError as e:
             error = f"Connection error: {e}"
@@ -549,11 +571,14 @@ class RalphSDKClient:
         end_time = datetime.now()
         metrics.duration_ms = int((end_time - start_time).total_seconds() * 1000)
         total_tokens = metrics.input_tokens + metrics.output_tokens
-        metrics.cost_usd = calculate_cost(
-            metrics.input_tokens,
-            metrics.output_tokens,
-            get_model_for_phase(phase or self.state.current_phase, self.config),
-        )
+
+        # Only calculate cost if SDK didn't provide it (SPEC-005)
+        if metrics.cost_usd == 0.0 and total_tokens > 0:
+            metrics.cost_usd = calculate_cost(
+                metrics.input_tokens,
+                metrics.output_tokens,
+                get_model_for_phase(phase or self.state.current_phase, self.config),
+            )
 
         # Check if handoff is needed
         needs_handoff = False
@@ -619,6 +644,7 @@ class RalphSDKClient:
         # Metrics tracking
         input_tokens = 0
         output_tokens = 0
+        cost_usd = 0.0  # May be set by SDK via ResultMessage.total_cost_usd
         tool_calls = 0
         task_completed = False
         task_id: str | None = None
@@ -700,14 +726,20 @@ class RalphSDKClient:
                                         success=True,
                                     )
 
-                    # Process result messages for token counts
-                    if isinstance(msg, ResultMessage) and hasattr(msg, "usage"):
-                        usage = msg.usage
-                        if usage is not None:
-                            if hasattr(usage, "input_tokens"):
-                                input_tokens += usage.input_tokens
-                            if hasattr(usage, "output_tokens"):
-                                output_tokens += usage.output_tokens
+                    # Process result messages for token counts and cost (SPEC-005)
+                    # Note: SDK returns usage as a dict, not an object
+                    if isinstance(msg, ResultMessage):
+                        # Extract cost directly from SDK if available
+                        if hasattr(msg, "total_cost_usd") and msg.total_cost_usd:
+                            cost_usd = msg.total_cost_usd
+
+                        # Extract tokens from usage dict
+                        if hasattr(msg, "usage") and msg.usage is not None:
+                            usage = msg.usage
+                            input_tokens += usage.get("input_tokens", 0)
+                            output_tokens += usage.get("output_tokens", 0)
+                            # Include cache read tokens in input count
+                            input_tokens += usage.get("cache_read_input_tokens", 0)
 
         except ConnectionError as e:
             yield error_event(f"Connection error: {e}", error_type="connection")
@@ -733,18 +765,61 @@ class RalphSDKClient:
         end_time = datetime.now()
         duration_ms = int((end_time - start_time).total_seconds() * 1000)
         total_tokens = input_tokens + output_tokens
-        cost_usd = calculate_cost(
-            input_tokens,
-            output_tokens,
-            get_model_for_phase(current_phase, self.config),
-        )
 
-        # Check if handoff is needed
+        # Only calculate cost if SDK didn't provide it (SPEC-005)
+        if cost_usd == 0.0 and total_tokens > 0:
+            cost_usd = calculate_cost(
+                input_tokens,
+                output_tokens,
+                get_model_for_phase(current_phase, self.config),
+            )
+
+        # Update context budget with tokens used
+        self.state.context_budget.add_usage(total_tokens)
+
+        # Check for context warnings and emit events (SPEC-005)
         needs_handoff = False
-        if self.state.context_budget.current_usage + total_tokens >= (
-            self.state.context_budget.smart_zone_max
-        ):
+        if self.state.context_budget.should_emergency_exit():
+            yield context_emergency_event(
+                usage_percent=self.state.context_budget.usage_percentage,
+                current_tokens=self.state.context_budget.current_usage,
+            )
             needs_handoff = True
+        elif self.state.context_budget.should_handoff():
+            needs_handoff = True
+        elif self.state.context_budget.should_warn():
+            yield context_warning_event(
+                usage_percent=self.state.context_budget.usage_percentage,
+                current_tokens=self.state.context_budget.current_usage,
+                threshold_percent=self.state.context_budget.handoff_threshold * 100,
+            )
+
+        # Capture session memory at handoff (SPEC-004 + SPEC-005)
+        if needs_handoff and self.memory_manager is not None:
+            try:
+                # Determine handoff reason
+                if self.state.context_budget.should_emergency_exit():
+                    handoff_reason = (
+                        f"Emergency: Context at "
+                        f"{self.state.context_budget.usage_percentage:.1f}%"
+                    )
+                else:
+                    handoff_reason = (
+                        f"Context budget threshold "
+                        f"({self.state.context_budget.usage_percentage:.1f}%)"
+                    )
+
+                # Load plan for memory capture
+                from ralph.persistence import load_plan
+
+                plan = load_plan(self.state.project_root)
+                self.memory_manager.capture_session_handoff_memory(
+                    state=self.state,
+                    plan=plan,
+                    handoff_reason=handoff_reason,
+                )
+            except Exception:
+                pass  # Don't fail iteration if memory capture fails
 
         # Yield iteration end event with summary
         yield iteration_end_event(
@@ -811,6 +886,7 @@ def create_ralph_client(
     hooks: dict[str, list[HookMatcher]] | None = None,
     mcp_servers: dict[str, Any] | None = None,
     user_input_callbacks: UserInputCallbacks | None = None,
+    memory_manager: MemoryManager | None = None,
 ) -> RalphSDKClient:
     """Create a RalphSDKClient for the given state.
 
@@ -820,6 +896,7 @@ def create_ralph_client(
         hooks: Optional SDK hooks
         mcp_servers: Optional MCP servers
         user_input_callbacks: Callbacks for user input handling (spinner control)
+        memory_manager: Optional MemoryManager for session handoff (SPEC-004)
 
     Returns:
         Configured RalphSDKClient
@@ -830,4 +907,5 @@ def create_ralph_client(
         hooks=hooks,
         mcp_servers=mcp_servers,
         user_input_callbacks=user_input_callbacks,
+        memory_manager=memory_manager,
     )

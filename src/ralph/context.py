@@ -526,7 +526,25 @@ def execute_context_handoff(
         HandoffResult with paths and next session ID
     """
     try:
-        # Generate and write MEMORY.md
+        # Capture session handoff memory using MemoryManager (harness-controlled)
+        # This provides deterministic memory capture at session boundaries
+        try:
+            from ralph.memory import MemoryManager
+
+            memory_manager = MemoryManager(project_root)
+            memory_manager.capture_session_handoff_memory(
+                state=state,
+                plan=plan,
+                handoff_reason=reason,
+            )
+
+            # Also rotate old memory files if needed
+            memory_manager.rotate_files()
+        except Exception as mem_error:
+            # Don't fail handoff if memory capture fails
+            logger.warning(f"Memory capture failed during handoff: {mem_error}")
+
+        # Generate and write MEMORY.md (legacy, for backwards compatibility)
         memory_content = generate_memory_content(
             state=state,
             plan=plan,

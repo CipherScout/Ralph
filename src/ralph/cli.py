@@ -128,13 +128,14 @@ class RalphLiveDisplay:
             # Stop the spinner before showing results
             self._stop_spinner()
 
-            tokens = event.data.get("tokens_used", 0)
-            cost = event.data.get("cost_usd", 0.0)
+            data = event.data or {}
+            tokens = data.get("tokens_used", 0)
+            cost = data.get("cost_usd", 0.0)
             self._total_tokens += tokens
             self._total_cost += cost
 
             if self.verbosity >= 1:
-                success = event.data.get("success", False)
+                success = data.get("success", False)
                 status = "[green]OK[/green]" if success else "[red]FAILED[/red]"
                 self.console.print(
                     f"  {status} [dim]({tokens:,} tokens, ${cost:.4f})[/dim]"
@@ -210,21 +211,24 @@ class RalphLiveDisplay:
             return response
 
         elif event.type == StreamEventType.TASK_COMPLETE:
-            task_id = event.task_id or event.data.get("task_id", "unknown")
-            notes = event.data.get("verification_notes", "")
+            data = event.data or {}
+            task_id = event.task_id or data.get("task_id", "unknown")
+            notes = data.get("verification_notes", "")
             self.console.print(f"[green]  Task completed: {task_id}[/green]")
             if notes and self.verbosity >= 2:
                 self.console.print(f"[dim]    Notes: {notes}[/dim]")
 
         elif event.type == StreamEventType.TASK_BLOCKED:
-            task_id = event.task_id or event.data.get("task_id", "unknown")
-            reason = event.data.get("reason", "Unknown reason")
+            data = event.data or {}
+            task_id = event.task_id or data.get("task_id", "unknown")
+            reason = data.get("reason", "Unknown reason")
             self.console.print(f"[yellow]  Task blocked: {task_id}[/yellow]")
             self.console.print(f"[dim]    Reason: {reason}[/dim]")
 
         elif event.type == StreamEventType.PHASE_CHANGE:
-            old_phase = event.data.get("old_phase", "unknown")
-            new_phase = event.data.get("new_phase", event.phase or "unknown")
+            data = event.data or {}
+            old_phase = data.get("old_phase", "unknown")
+            new_phase = data.get("new_phase", event.phase or "unknown")
             self.console.print(
                 f"\n[bold blue]Phase transition: {old_phase} -> {new_phase}[/bold blue]"
             )
@@ -233,7 +237,8 @@ class RalphLiveDisplay:
                 self._phase_animation.show_phase_banner(str(new_phase))
 
         elif event.type == StreamEventType.HANDOFF_START:
-            reason = event.data.get("reason", "context budget")
+            data = event.data or {}
+            reason = data.get("reason", "context budget")
             self.console.print(f"\n[yellow]Context handoff ({reason})...[/yellow]")
 
         elif event.type == StreamEventType.HANDOFF_COMPLETE:
@@ -241,21 +246,46 @@ class RalphLiveDisplay:
             self.console.print(f"[green]Handoff complete. New session: {new_session}[/green]")
 
         elif event.type == StreamEventType.ERROR:
-            message = event.error_message or event.data.get("message", "Unknown error")
-            error_type = event.data.get("error_type", "")
+            data = event.data or {}
+            message = event.error_message or data.get("message", "Unknown error")
+            error_type = data.get("error_type", "")
             if error_type:
                 self.console.print(f"[red]Error ({error_type}): {message}[/red]")
             else:
                 self.console.print(f"[red]Error: {message}[/red]")
 
         elif event.type == StreamEventType.WARNING:
-            message = event.error_message or event.data.get("message", "Warning")
+            data = event.data or {}
+            message = event.error_message or data.get("message", "Warning")
             self.console.print(f"[yellow]Warning: {message}[/yellow]")
 
         elif event.type == StreamEventType.INFO:
-            message = event.data.get("message", "")
+            data = event.data or {}
+            message = data.get("message", "")
             if message and self.verbosity >= 1:
                 self.console.print(f"[dim]{message}[/dim]")
+
+        elif event.type == StreamEventType.CONTEXT_WARNING:
+            # Stop spinner to show warning
+            self._stop_spinner()
+            data = event.data or {}
+            usage = data.get("usage_percent", 0)
+            threshold = data.get("threshold_percent", 80)
+            self.console.print(
+                f"\n[yellow]⚠ Context at {usage:.1f}% - "
+                f"approaching {threshold:.0f}% limit[/yellow]"
+            )
+            self._start_spinner()
+
+        elif event.type == StreamEventType.CONTEXT_EMERGENCY:
+            # Stop spinner to show emergency
+            self._stop_spinner()
+            data = event.data or {}
+            usage = data.get("usage_percent", 0)
+            self.console.print(
+                f"\n[red bold]🚨 Emergency: Context at {usage:.1f}% - "
+                f"forcing handoff[/red bold]"
+            )
 
         return None
 
@@ -288,28 +318,28 @@ class RalphLiveDisplay:
             return str(path)[-50:] if len(str(path)) > 50 else str(path)
 
         elif tool_name == "Bash":
-            cmd = input_data.get("command", "")
+            cmd = str(input_data.get("command", ""))
             return (cmd[:60] + "...") if len(cmd) > 60 else cmd
 
         elif tool_name == "Grep":
-            pattern = input_data.get("pattern", "")
-            path = input_data.get("path", ".")
+            pattern = str(input_data.get("pattern", ""))
+            path = str(input_data.get("path", "."))
             return f"'{pattern}' in {path}"
 
         elif tool_name == "Glob":
-            pattern = input_data.get("pattern", "")
+            pattern = str(input_data.get("pattern", ""))
             return pattern
 
         elif tool_name == "WebSearch":
-            query = input_data.get("query", "")
+            query = str(input_data.get("query", ""))
             return f'"{query}"'
 
         elif tool_name == "WebFetch":
-            url = input_data.get("url", "")
+            url = str(input_data.get("url", ""))
             return url[:60] if len(url) > 60 else url
 
         elif tool_name == "Task":
-            desc = input_data.get("description", "")
+            desc = str(input_data.get("description", ""))
             return desc[:40] if len(desc) > 40 else desc
 
         elif tool_name == "AskUserQuestion":
@@ -1033,6 +1063,140 @@ def history(
 
 
 # ============================================================================
+# Memory Management Command
+# ============================================================================
+
+
+@app.command()
+def memory(
+    project_root: str = typer.Option(".", "--project-root", "-p", help="Project root directory"),
+    show: bool = typer.Option(False, "--show", "-s", help="Show active memory content"),
+    stats: bool = typer.Option(False, "--stats", help="Show memory statistics"),
+    cleanup: bool = typer.Option(False, "--cleanup", help="Run memory cleanup"),
+) -> None:
+    """Manage Ralph memory system.
+
+    View active memory, statistics, or run cleanup operations.
+
+    Examples:
+        ralph memory --show       # Show current active memory
+        ralph memory --stats      # Show memory file statistics
+        ralph memory --cleanup    # Rotate old files to archive
+    """
+    from ralph.memory import MemoryManager
+
+    try:
+        path = _resolve_project_root(project_root)
+    except typer.BadParameter as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1) from None
+
+    if not state_exists(path):
+        console.print(f"[yellow]Ralph not initialized in {path}[/yellow]")
+        console.print("Run 'ralph init' to initialize")
+        raise typer.Exit(1)
+
+    memory_manager = MemoryManager(path)
+
+    # Default to --show if no flags provided
+    if not show and not stats and not cleanup:
+        show = True
+
+    if show:
+        try:
+            state = load_state(path)
+            plan = load_plan(path) if plan_exists(path) else None
+
+            if plan is not None:
+                active_memory = memory_manager.build_active_memory(state, plan)
+            else:
+                active_memory = ""
+
+            if active_memory:
+                console.print(Panel(active_memory, title="Active Memory", border_style="cyan"))
+            else:
+                console.print("[dim]No active memory content[/dim]")
+
+        except (StateNotFoundError, CorruptedStateError) as e:
+            console.print(f"[red]Error loading state: {e}[/red]")
+            raise typer.Exit(1) from None
+
+    if stats:
+        # Collect memory file statistics
+        memory_dir = path / ".ralph" / "memory"
+
+        stats_data = {
+            "phases": 0,
+            "iterations": 0,
+            "sessions": 0,
+            "archived": 0,
+            "total_size_kb": 0.0,
+        }
+
+        # Count files in each directory
+        phases_dir = memory_dir / "phases"
+        if phases_dir.exists():
+            phase_files = list(phases_dir.glob("*.md"))
+            stats_data["phases"] = len(phase_files)
+            stats_data["total_size_kb"] += sum(f.stat().st_size for f in phase_files) / 1024
+
+        iterations_dir = memory_dir / "iterations"
+        if iterations_dir.exists():
+            iter_files = list(iterations_dir.glob("*.md"))
+            stats_data["iterations"] = len(iter_files)
+            stats_data["total_size_kb"] += sum(f.stat().st_size for f in iter_files) / 1024
+
+        sessions_dir = memory_dir / "sessions"
+        if sessions_dir.exists():
+            session_files = list(sessions_dir.glob("*.md"))
+            stats_data["sessions"] = len(session_files)
+            stats_data["total_size_kb"] += sum(f.stat().st_size for f in session_files) / 1024
+
+        archive_dir = memory_dir / "archive"
+        if archive_dir.exists():
+            archive_files = list(archive_dir.glob("*"))
+            stats_data["archived"] = len(archive_files)
+            stats_data["total_size_kb"] += sum(f.stat().st_size for f in archive_files) / 1024
+
+        # Check active memory file
+        active_memory_path = path / ".ralph" / "MEMORY.md"
+        active_size = 0.0
+        if active_memory_path.exists():
+            active_size = active_memory_path.stat().st_size / 1024
+            stats_data["total_size_kb"] += active_size
+
+        # Display statistics
+        stats_text = f"""[bold]Memory Files:[/bold]
+  Phase memories:     {stats_data['phases']}
+  Iteration memories: {stats_data['iterations']}
+  Session memories:   {stats_data['sessions']}
+  Archived files:     {stats_data['archived']}
+
+[bold]Storage:[/bold]
+  Active memory:      {active_size:.2f} KB
+  Total size:         {stats_data['total_size_kb']:.2f} KB
+
+[bold]Configuration:[/bold]
+  Max active chars:   {memory_manager.config.max_active_memory_chars:,}
+  Max iteration files: {memory_manager.config.max_iteration_files}
+  Max session files:   {memory_manager.config.max_session_files}"""
+
+        console.print(Panel(stats_text, title="Memory Statistics", border_style="blue"))
+
+    if cleanup:
+        console.print("[dim]Running memory cleanup...[/dim]")
+
+        rotated = memory_manager.rotate_files()
+        deleted = memory_manager.cleanup_archive()
+
+        if rotated > 0 or deleted > 0:
+            console.print(f"[green]✓ Rotated {rotated} files to archive[/green]")
+            console.print(f"[green]✓ Deleted {deleted} old archived files[/green]")
+        else:
+            console.print("[dim]No files needed cleanup[/dim]")
+
+
+# ============================================================================
 # Phase Commands (Placeholders for phase implementations)
 # ============================================================================
 
@@ -1404,7 +1568,7 @@ def plan(
 @app.command()
 def build(
     project_root: str = typer.Option(".", "--project-root", "-p", help="Project root directory"),
-    task_id: str = typer.Option(None, "--task", "-t", help="Specific task to work on"),
+    task_id: str | None = typer.Option(None, "--task", "-t", help="Specific task to work on"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Quiet output (hide LLM text)"),
     no_auto: bool = typer.Option(
         False, "--no-auto", help="Disable auto-transition to next phase"

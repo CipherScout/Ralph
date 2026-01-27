@@ -133,9 +133,9 @@ class TestPhaseOrchestrator:
         assert result.tasks_completed == 1
 
     def test_end_iteration_triggers_handoff(self, project_path: Path) -> None:
-        """Detects when handoff is needed."""
+        """Detects when handoff is needed (at 80% per SPEC-005)."""
         orchestrator = PhaseOrchestrator(project_path)
-        orchestrator.state.context_budget.add_usage(130_000)  # > 60%
+        orchestrator.state.context_budget.add_usage(165_000)  # > 80% (SPEC-005 threshold)
 
         result = orchestrator.end_iteration(
             cost_usd=0.05,
@@ -319,6 +319,40 @@ class TestBuildBuildingPrompt:
         prompt = build_building_prompt(project_path)
         assert "uv run" in prompt
 
+    def test_includes_spec_files(self, project_path: Path) -> None:
+        """Includes spec file references when task has spec_files."""
+        task = Task(
+            id="test-task",
+            description="Implement feature X",
+            priority=1,
+            spec_files=["specs/SPEC-001-auth.md", "specs/PRD.md"],
+        )
+        prompt = build_building_prompt(project_path, task=task)
+
+        assert "Spec Files (READ THESE FIRST)" in prompt
+        assert "specs/SPEC-001-auth.md" in prompt
+        assert "specs/PRD.md" in prompt
+
+    def test_excludes_spec_files_when_empty(self, project_path: Path) -> None:
+        """Does not include spec files section when task has no spec_files."""
+        task = Task(
+            id="test-task",
+            description="Implement feature X",
+            priority=1,
+            spec_files=[],
+        )
+        prompt = build_building_prompt(project_path, task=task)
+
+        assert "Spec Files" not in prompt
+
+    def test_includes_foundational_documents(self, project_path: Path) -> None:
+        """Includes foundational documents section."""
+        prompt = build_building_prompt(project_path)
+
+        assert "Foundational Documents" in prompt
+        assert "specs/PRD.md" in prompt
+        assert "specs/TECHNICAL_ARCHITECTURE.md" in prompt
+
 
 class TestBuildValidationPrompt:
     """Tests for build_validation_prompt."""
@@ -340,6 +374,15 @@ class TestBuildValidationPrompt:
         prompt = build_validation_prompt(project_path)
         assert "PASS" in prompt
         assert "FAIL" in prompt
+
+    def test_includes_foundational_documents(self, project_path: Path) -> None:
+        """Includes foundational documents section."""
+        prompt = build_validation_prompt(project_path)
+
+        assert "Foundational Documents" in prompt
+        assert "specs/PRD.md" in prompt
+        assert "specs/TECHNICAL_ARCHITECTURE.md" in prompt
+        assert "specs/SPEC-*.md" in prompt
 
 
 class TestGetPhasePrompt:

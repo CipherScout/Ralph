@@ -109,6 +109,7 @@ def _deserialize_task(data: dict[str, Any]) -> Task:
         completion_notes=data.get("completion_notes"),
         completed_at=_iso_to_datetime(data["completed_at"]) if data.get("completed_at") else None,
         retry_count=data.get("retry_count", 0),
+        spec_files=data.get("spec_files", []),
     )
 
 

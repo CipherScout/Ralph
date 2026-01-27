@@ -534,6 +534,15 @@ For each task, specify:
 - priority: 1 = highest priority, larger = lower
 - dependencies: List of task IDs this depends on
 - verification_criteria: How to verify completion
+- spec_files: List of relevant spec files (e.g., ["specs/SPEC-001-auth.md", "specs/PRD.md"])
+
+## Spec File References
+
+**Every task should reference at least one spec file.** This helps the building phase agent
+understand the requirements:
+- Use relative paths from project root (e.g., "specs/SPEC-001-auth.md")
+- Reference the SPEC file(s) most relevant to each task
+- Include PRD.md if the task relates to overall product requirements
 
 ## Dependency Rules
 
@@ -585,6 +594,11 @@ You are in the BUILDING phase of the Ralph development loop.
 Implement the current task from the implementation plan.
 Follow test-driven development and maintain code quality.
 
+## Foundational Documents (REVIEW FIRST)
+Before starting any task, review these key documents for context:
+- `specs/PRD.md` - Product requirements and overall goals
+- `specs/TECHNICAL_ARCHITECTURE.md` - Architecture decisions and patterns
+
 ## Project Context
 - Project Root: {project_root}
 - Project Name: {config.project.name}
@@ -612,6 +626,13 @@ Follow test-driven development and maintain code quality.
             prompt += "### Dependencies (already completed)\n"
             for dep in task.dependencies:
                 prompt += f"- {dep}\n"
+            prompt += "\n"
+
+        if task.spec_files:
+            prompt += "### Spec Files (READ THESE FIRST)\n"
+            prompt += "Before implementing, read these specification files for requirements:\n"
+            for spec in task.spec_files:
+                prompt += f"- {spec}\n"
             prompt += "\n"
 
     prompt += f"""## Development Process
@@ -675,6 +696,12 @@ You are in the VALIDATION phase of the Ralph development loop.
 ## Your Mission
 Verify that all implemented tasks meet their requirements and the overall
 project goals are achieved.
+
+## Foundational Documents (REVIEW FIRST)
+Before validating, review these key documents to understand what was planned:
+- `specs/PRD.md` - Product requirements and success criteria
+- `specs/TECHNICAL_ARCHITECTURE.md` - Architecture decisions and constraints
+- `specs/SPEC-*.md` - Individual feature specifications
 
 ## Project Context
 - Project Root: {project_root}

@@ -443,9 +443,22 @@ class TestPhaseValidationHook:
             assert result == {}, f"Read should be allowed in {phase.value}"
 
     @pytest.mark.asyncio
-    async def test_blocks_ask_user_in_validation(self) -> None:
-        """AskUserQuestion tool is blocked in validation phase."""
+    async def test_allows_ask_user_in_validation(self) -> None:
+        """AskUserQuestion tool is allowed in validation phase (SPEC-002)."""
         state = create_mock_state(phase=Phase.VALIDATION)
+        hook = create_phase_validation_hook(state)
+        hook_fn = hook.hooks[0]
+        result = await hook_fn(
+            create_pre_tool_use_input("AskUserQuestion", {"questions": []}),
+            "test-id",
+            create_hook_context(),
+        )
+        assert result == {}  # Allowed in validation for human approval
+
+    @pytest.mark.asyncio
+    async def test_blocks_ask_user_in_building(self) -> None:
+        """AskUserQuestion tool is blocked in building phase."""
+        state = create_mock_state(phase=Phase.BUILDING)
         hook = create_phase_validation_hook(state)
         hook_fn = hook.hooks[0]
         result = await hook_fn(
@@ -559,9 +572,9 @@ class TestContextBudgetHook:
 
     @pytest.mark.asyncio
     async def test_blocks_over_budget(self) -> None:
-        """Blocks tool use when over context budget."""
-        # Set usage to trigger handoff (> 60% of capacity)
-        state = create_mock_state(context_usage=130_000, context_capacity=200_000)
+        """Blocks tool use when over context budget (80% per SPEC-005)."""
+        # Set usage to trigger handoff (> 80% of capacity per SPEC-005)
+        state = create_mock_state(context_usage=165_000, context_capacity=200_000)
         hook = create_context_budget_hook(state)
         hook_fn = hook.hooks[0]
         result = await hook_fn(

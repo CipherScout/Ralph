@@ -102,6 +102,7 @@ Ralph is a deterministic agentic coding loop built on the Claude Agent SDK. The 
 | **models.py** | Core data structures (State, Plan, Task) |
 | **persistence.py** | JSON state save/load with atomic writes |
 | **context.py** | Context window management, MEMORY.md generation |
+| **memory.py** | Deterministic memory capture at phase/iteration/session boundaries |
 | **config.py** | YAML configuration, cost limits |
 | **verification.py** | Backpressure commands, validation reports |
 | **iteration.py** | Single iteration execution logic |
@@ -756,6 +757,83 @@ def should_trigger_handoff(state: RalphState) -> tuple[bool, str | None]: ...
 **Dependencies**:
 - `models.py` - RalphState, ImplementationPlan, Phase, TaskStatus
 - `persistence.py` - For loading state (indirect)
+
+---
+
+### memory.py - Deterministic Memory System
+
+**Purpose**: Provides harness-controlled memory capture at well-defined boundaries (phase transitions, iteration ends, session handoffs). Unlike LLM-dependent approaches, this ensures consistent memory capture regardless of LLM behavior.
+
+**Key Classes/Functions**:
+
+```python
+@dataclass
+class MemoryConfig:
+    """Configuration for memory system."""
+    max_active_memory_chars: int = 8000
+    max_iteration_files: int = 20
+    max_session_files: int = 10
+    archive_retention_days: int = 30
+
+@dataclass
+class IterationMemory:
+    """Memory snapshot from a single iteration."""
+    iteration: int
+    phase: Phase
+    timestamp: datetime
+    tasks_completed: list[str]
+    tasks_blocked: list[str]
+    progress_made: bool
+    tokens_used: int
+    cost_usd: float
+
+@dataclass
+class PhaseMemory:
+    """Memory from a phase transition."""
+    phase: Phase
+    completed_at: datetime
+    iterations_in_phase: int
+    artifacts: dict[str, Any]
+    summary: str
+
+@dataclass
+class SessionMemory:
+    """Memory from a session handoff."""
+    session_id: str
+    ended_at: datetime
+    iteration_count: int
+    phase: Phase
+    handoff_reason: str
+    tasks_in_progress: list[str]
+    tokens_used: int
+    cost_usd: float
+
+class MemoryManager:
+    """Manages deterministic memory capture and retrieval."""
+
+    def __init__(self, project_root: Path, config: MemoryConfig | None = None): ...
+
+    # Capture methods (called by executors at boundaries)
+    def capture_iteration_memory(self, state: RalphState, plan: ImplementationPlan, result: IterationResult) -> Path: ...
+    def capture_phase_transition_memory(self, state: RalphState, plan: ImplementationPlan, old_phase: Phase, new_phase: Phase, artifacts: dict) -> Path: ...
+    def capture_session_handoff_memory(self, state: RalphState, plan: ImplementationPlan, handoff_reason: str) -> Path: ...
+
+    # Retrieval methods
+    def build_active_memory(self, state: RalphState, plan: ImplementationPlan) -> str: ...
+    def load_phase_memory(self, phase: Phase) -> str | None: ...
+    def load_recent_iterations(self, limit: int = 5) -> list[IterationMemory]: ...
+
+    # Cleanup methods
+    def rotate_files(self) -> int: ...
+    def cleanup_archive(self) -> int: ...
+
+    # Directory management
+    def _ensure_directories(self) -> None: ...
+```
+
+**Dependencies**:
+- `models.py` - RalphState, ImplementationPlan, Phase, Task
+- `sdk_client.py` - IterationResult
 
 ---
 
@@ -1690,6 +1768,7 @@ uv run ruff check .
 | `src/ralph/models.py` | Data models |
 | `src/ralph/persistence.py` | State I/O |
 | `src/ralph/context.py` | Context management |
+| `src/ralph/memory.py` | Deterministic memory capture |
 | `src/ralph/config.py` | Configuration |
 | `src/ralph/verification.py` | Validation logic |
 | `src/ralph/iteration.py` | Iteration logic |
@@ -1698,5 +1777,6 @@ uv run ruff check .
 | `.ralph/state.json` | Runtime state |
 | `.ralph/implementation_plan.json` | Task plan |
 | `.ralph/config.yaml` | Project config |
-| `MEMORY.md` | Session handoff |
+| `.ralph/MEMORY.md` | Active memory for prompt injection |
+| `.ralph/memory/` | Deterministic memory files |
 | `progress.txt` | Learnings log |

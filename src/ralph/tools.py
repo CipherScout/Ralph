@@ -466,6 +466,7 @@ class RalphTools:
         dependencies: list[str] | None = None,
         verification_criteria: list[str] | None = None,
         estimated_tokens: int = 30_000,
+        spec_files: list[str] | None = None,
     ) -> ToolResult:
         """Add a new task to the implementation plan.
 
@@ -476,6 +477,7 @@ class RalphTools:
             dependencies: List of task IDs this depends on
             verification_criteria: List of criteria to verify completion
             estimated_tokens: Estimated tokens needed
+            spec_files: List of relative paths to spec files
 
         Returns:
             ToolResult indicating success or failure
@@ -508,6 +510,7 @@ class RalphTools:
                 dependencies=dependencies or [],
                 verification_criteria=verification_criteria or [],
                 estimated_tokens=estimated_tokens,
+                spec_files=spec_files or [],
             )
 
             plan.tasks.append(task)

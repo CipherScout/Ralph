@@ -85,6 +85,7 @@ def sample_plan() -> ImplementationPlan:
                 completion_notes="Done successfully",
                 completed_at=datetime(2025, 1, 15, 10, 30, 0),
                 retry_count=0,
+                spec_files=["specs/SPEC-001-auth.md", "specs/PRD.md"],
             ),
             Task(
                 id="task-2",
@@ -98,6 +99,7 @@ def sample_plan() -> ImplementationPlan:
                 completion_notes=None,
                 completed_at=None,
                 retry_count=0,
+                spec_files=[],
             ),
             Task(
                 id="task-3",
@@ -327,6 +329,7 @@ class TestSaveAndLoadPlan:
             assert loaded_task.completion_notes == orig_task.completion_notes
             assert loaded_task.completed_at == orig_task.completed_at
             assert loaded_task.retry_count == orig_task.retry_count
+            assert loaded_task.spec_files == orig_task.spec_files
 
     def test_round_trip_preserves_timestamps(
         self, temp_project: Path, sample_plan: ImplementationPlan

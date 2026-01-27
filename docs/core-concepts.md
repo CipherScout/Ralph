@@ -10,9 +10,10 @@ This guide explains the fundamental concepts behind Ralph, a deterministic agent
 2. [The Four Phases](#the-four-phases)
 3. [State Management](#state-management)
 4. [Context Window Management](#context-window-management)
-5. [Task Lifecycle](#task-lifecycle)
-6. [Safety Controls](#safety-controls)
-7. [MCP Tools](#mcp-tools)
+5. [Memory System](#memory-system)
+6. [Task Lifecycle](#task-lifecycle)
+7. [Safety Controls](#safety-controls)
+8. [MCP Tools](#mcp-tools)
 
 ---
 
@@ -620,6 +621,162 @@ Completed sessions are archived to `.ralph/session_history/sessions.jsonl`:
 ```
 
 This provides a full audit trail of all sessions.
+
+---
+
+## Memory System
+
+Ralph includes a **deterministic memory system** that automatically captures context at well-defined boundaries. Unlike approaches that rely on the LLM to decide when and what to remember, Ralph's memory capture is **harness-controlled** (Python code), ensuring consistent and predictable memory management.
+
+### Why Deterministic Memory?
+
+| Approach | Reliability | Consistency |
+|----------|-------------|-------------|
+| LLM-controlled memory | ~70-80% | Variable |
+| Ralph's deterministic memory | 100% | Always captured |
+
+When memory capture is left to the LLM:
+- Important context may be forgotten
+- Memory updates are inconsistent
+- Format varies between sessions
+- No guarantee of capture at critical moments
+
+Ralph solves this by capturing memory at three deterministic boundaries.
+
+### Memory Capture Boundaries
+
+```
++-------------------+
+|    Iteration N    |
+|     (work done)   |
++---------+---------+
+          |
+          | Automatic capture
+          v
++-------------------+
+| Iteration Memory  | --> .ralph/memory/iterations/iter-NNN.md
++-------------------+
+
++-------------------+     +-------------------+
+|   Phase A         | --> |   Phase B         |
+|   (discovery)     |     |   (planning)      |
++---------+---------+     +-------------------+
+          |
+          | Automatic capture
+          v
++-------------------+
+|   Phase Memory    | --> .ralph/memory/phases/discovery.md
++-------------------+
+
++-------------------+     +-------------------+
+|   Session N       | --> |   Session N+1     |
+|   (context full)  |     |   (fresh start)   |
++---------+---------+     +-------------------+
+          |
+          | Automatic capture
+          v
++-------------------+
+| Session Memory    | --> .ralph/memory/sessions/session-NNN.md
++-------------------+
+```
+
+### Memory Directory Structure
+
+```
+.ralph/
+├── MEMORY.md                 # Active memory (injected into prompts)
+└── memory/
+    ├── phases/               # Phase transition memories
+    │   ├── discovery.md      # What was learned during discovery
+    │   ├── planning.md       # Planning decisions and rationale
+    │   └── building.md       # Build progress and patterns
+    ├── iterations/           # Per-iteration snapshots
+    │   ├── iter-001.md
+    │   ├── iter-002.md
+    │   └── ...
+    ├── sessions/             # Session handoff summaries
+    │   └── session-001.md
+    └── archive/              # Rotated old files
+```
+
+### What Gets Captured
+
+**Iteration Memory** (at end of each iteration):
+- Phase and iteration number
+- Tasks completed/blocked this iteration
+- Progress made (yes/no)
+- Token usage and cost
+- Timestamp
+
+**Phase Memory** (at phase transitions):
+- Phase being completed
+- Key artifacts produced (specs, tasks, code)
+- Decisions made during the phase
+- Metrics (iterations, cost, tokens)
+
+**Session Memory** (at context handoffs):
+- Session ID and duration
+- Tasks in progress when handoff occurred
+- Reason for handoff
+- Cumulative session metrics
+- Notes for next session
+
+### Active Memory Construction
+
+When a new iteration starts, Ralph builds **active memory** from multiple sources:
+
+```python
+def build_active_memory(state, plan) -> str:
+    sections = []
+
+    # 1. Previous phase context (if recently transitioned)
+    if recent_phase_transition:
+        sections.append(load_phase_memory(previous_phase))
+
+    # 2. Recent iterations (last 3)
+    recent = load_recent_iterations(limit=3)
+    sections.append(format_iteration_summaries(recent))
+
+    # 3. Current task state
+    sections.append(format_task_state(plan))
+
+    # 4. Session metrics
+    sections.append(format_session_metrics(state))
+
+    # Truncate to 8000 chars max
+    return truncate_and_combine(sections)
+```
+
+This ensures each iteration has relevant context without bloating the context window.
+
+### Memory Rotation and Cleanup
+
+To prevent unbounded storage growth:
+
+| File Type | Max Files | Rotation Action |
+|-----------|-----------|-----------------|
+| Iteration memories | 20 | Move oldest to archive |
+| Session memories | 10 | Move oldest to archive |
+| Archive files | 30 days | Delete |
+
+Use `ralph-agent memory --cleanup` to manually trigger rotation.
+
+### Viewing Memory
+
+```bash
+# View active memory (what gets injected into prompts)
+ralph-agent memory --show
+
+# View memory statistics
+ralph-agent memory --stats
+
+# Run cleanup manually
+ralph-agent memory --cleanup
+```
+
+### Backwards Compatibility
+
+The `ralph_update_memory` MCP tool remains available for the LLM to explicitly request memory updates. These are additive to the deterministic captures—the harness-controlled system ensures baseline capture even if the LLM never calls the tool.
 
 ---
 

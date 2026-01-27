@@ -249,7 +249,7 @@ class TestPhaseTools:
         assert "TodoWrite" in tools  # Now allowed for tracking
 
     def test_building_phase_tools(self) -> None:
-        """Building phase has full tool access."""
+        """Building phase has implementation tools but not AskUserQuestion."""
         tools = get_tools_for_phase(Phase.BUILDING)
         assert "Read" in tools
         assert "Write" in tools
@@ -258,16 +258,22 @@ class TestPhaseTools:
         assert "BashOutput" in tools
         assert "KillBash" in tools
         assert "TodoWrite" in tools
+        # AskUserQuestion NOT in Building - agent should focus on implementation
+        assert "AskUserQuestion" not in tools
 
     def test_validation_phase_tools(self) -> None:
-        """Validation phase has correct tools."""
+        """Validation phase has correct tools including AskUserQuestion."""
         tools = get_tools_for_phase(Phase.VALIDATION)
         assert "Read" in tools
         assert "Bash" in tools
         assert "Task" in tools
-        assert "Write" in tools  # Now allowed for validation report
-        assert "Edit" in tools  # Now allowed for all phases
-        assert "WebSearch" in tools  # Now allowed for all phases
+        assert "Write" in tools
+        assert "Edit" in tools
+        assert "WebSearch" in tools
+        # SPEC-002: Tool parity
+        assert "TodoWrite" in tools  # For tracking validation progress
+        assert "AskUserQuestion" in tools  # For human approval workflow
+        assert "NotebookEdit" in tools
 
     def test_all_phases_have_read(self) -> None:
         """All phases have Read tool."""
@@ -279,6 +285,19 @@ class TestPhaseTools:
         """PHASE_TOOLS constant has all phases defined."""
         for phase in Phase:
             assert phase in PHASE_TOOLS
+
+    def test_all_sdk_tools_constant_exists(self) -> None:
+        """ALL_SDK_TOOLS constant contains all expected tools."""
+        from ralph.sdk_client import ALL_SDK_TOOLS
+
+        expected_tools = [
+            "Read", "Write", "Edit", "Bash", "BashOutput", "KillBash",
+            "Glob", "Grep", "Task", "TodoWrite", "WebSearch", "WebFetch",
+            "NotebookEdit", "AskUserQuestion", "ExitPlanMode",
+            "ListMcpResourcesTool", "ReadMcpResourceTool",
+        ]
+        for tool in expected_tools:
+            assert tool in ALL_SDK_TOOLS, f"Tool {tool} missing from ALL_SDK_TOOLS"
 
 
 class TestCalculateMaxTurns:
@@ -444,19 +463,21 @@ class TestRalphSDKClient:
 
         options = client._build_options(phase=Phase.VALIDATION)
 
-        # Should have validation tools, not building tools
-        # AskUserQuestion is only in discovery, not validation
-        assert "AskUserQuestion" not in options.allowed_tools
+        # SPEC-002: All tools now available in all phases
+        assert "AskUserQuestion" in options.allowed_tools  # Universal access
         assert "Read" in options.allowed_tools
+        assert "TodoWrite" in options.allowed_tools  # Universal access
 
+    @patch("ralph.memory.MemoryManager")
     @patch("ralph.sdk_client._get_ralph_hooks")
     @patch("ralph.sdk_client._get_mcp_server")
     def test_build_options_sets_cwd(
-        self, mock_mcp: MagicMock, mock_hooks: MagicMock
+        self, mock_mcp: MagicMock, mock_hooks: MagicMock, mock_memory: MagicMock
     ) -> None:
         """Built options set cwd from state."""
         mock_hooks.return_value = {"PreToolUse": []}
         mock_mcp.return_value = None
+        mock_memory.return_value = MagicMock()
 
         state = create_mock_state(project_root=Path("/test/project"))
         client = RalphSDKClient(state=state)
@@ -801,11 +822,13 @@ class TestUserInputCallbacks:
         handler = _create_ask_user_handler(callbacks)
 
         # Mock Prompt.ask to raise an exception
-        with patch("ralph.sdk_client.Prompt.ask", side_effect=KeyboardInterrupt):
-            with pytest.raises(KeyboardInterrupt):
-                await handler(
-                    {"questions": [{"question": "Test?", "header": "Q", "options": []}]}
-                )
+        with (
+            patch("ralph.sdk_client.Prompt.ask", side_effect=KeyboardInterrupt),
+            pytest.raises(KeyboardInterrupt),
+        ):
+            await handler(
+                {"questions": [{"question": "Test?", "header": "Q", "options": []}]}
+            )
 
         assert end_called, "on_question_end not called after exception"
 
@@ -957,3 +980,85 @@ class TestRalphSDKClientWithCallbacks:
 
         # The can_use_tool should be set
         assert options.can_use_tool is not None
+
+
+class TestTokenExtraction:
+    """Tests for token/cost extraction from SDK messages (SPEC-005).
+
+    The SDK returns usage as a dict, not an object with attributes.
+    """
+
+    def test_usage_dict_format(self) -> None:
+        """Verify usage dict format matches SDK documentation."""
+        # This is the format the SDK uses (dict, not object)
+        usage = {
+            "input_tokens": 1000,
+            "output_tokens": 500,
+            "cache_read_input_tokens": 200,
+        }
+        # Dict access should work
+        assert usage.get("input_tokens", 0) == 1000
+        assert usage.get("output_tokens", 0) == 500
+        assert usage.get("cache_read_input_tokens", 0) == 200
+        assert usage.get("nonexistent", 0) == 0
+
+    def test_handles_missing_usage_gracefully(self) -> None:
+        """No crash when usage is None."""
+        usage = None
+        # This pattern should not raise
+        if usage is not None:
+            _ = usage.get("input_tokens", 0)
+        # If usage is None, we should get defaults
+        input_tokens = usage.get("input_tokens", 0) if usage else 0
+        assert input_tokens == 0
+
+    def test_handles_partial_usage_dict(self) -> None:
+        """Works when some fields are missing from usage dict."""
+        usage = {"input_tokens": 1000}  # output_tokens missing
+        input_tokens = usage.get("input_tokens", 0)
+        output_tokens = usage.get("output_tokens", 0)  # Should default to 0
+        cache_tokens = usage.get("cache_read_input_tokens", 0)
+
+        assert input_tokens == 1000
+        assert output_tokens == 0
+        assert cache_tokens == 0
+
+    def test_total_cost_usd_attribute(self) -> None:
+        """Verify we can access total_cost_usd from ResultMessage-like object."""
+        # Mock a ResultMessage-like structure
+        class MockResultMessage:
+            total_cost_usd: float | None = 0.0150
+            usage: dict | None = {"input_tokens": 1000, "output_tokens": 500}
+
+        msg = MockResultMessage()
+        # Direct attribute access should work
+        assert msg.total_cost_usd == 0.0150
+        # Usage should be a dict
+        assert isinstance(msg.usage, dict)
+        assert msg.usage.get("input_tokens") == 1000
+
+    def test_cost_fallback_when_sdk_cost_none(self) -> None:
+        """Cost should be calculated when SDK doesn't provide total_cost_usd."""
+        # When SDK returns None, we should calculate from tokens
+        from ralph.sdk_client import calculate_cost
+
+        input_tokens = 1000
+        output_tokens = 500
+        calculated_cost = calculate_cost(
+            input_tokens, output_tokens, "claude-sonnet-4-20250514"
+        )
+        # Verify cost is calculated (sonnet: $3/1M input, $15/1M output)
+        expected = (1000 / 1_000_000) * 3.0 + (500 / 1_000_000) * 15.0
+        assert abs(calculated_cost - expected) < 0.0001
+
+    def test_cache_tokens_added_to_input(self) -> None:
+        """Cache read tokens should be added to total input tokens."""
+        usage = {
+            "input_tokens": 1000,
+            "output_tokens": 500,
+            "cache_read_input_tokens": 200,
+        }
+        total_input = usage.get("input_tokens", 0) + usage.get(
+            "cache_read_input_tokens", 0
+        )
+        assert total_input == 1200

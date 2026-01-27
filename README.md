@@ -132,6 +132,9 @@ uv run ralph-agent handoff [--reason "why"]
 
 # Regenerate plan from specs
 uv run ralph-agent regenerate-plan [--discard-completed]
+
+# View and manage memory system
+uv run ralph-agent memory [--show] [--stats] [--cleanup]
 ```
 
 ### Development Commands
@@ -190,7 +193,13 @@ Comprehensive verification including:
 .ralph/
 ├── state.json              # Master state (phase, iteration, costs)
 ├── implementation_plan.json # Task list with dependencies
-└── session_history/        # Context handoff records
+├── MEMORY.md               # Active memory (injected into prompts)
+├── session_history/        # Context handoff records
+└── memory/                 # Deterministic memory capture
+    ├── phases/             # Phase transition memories
+    ├── iterations/         # Iteration boundary memories
+    ├── sessions/           # Session handoff memories
+    └── archive/            # Rotated old files
 
 specs/                      # Requirement specifications (from Discovery)
 progress.txt               # Operational learnings log

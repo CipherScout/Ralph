@@ -23,6 +23,7 @@ Ralph is a deterministic agentic coding loop using Claude Agent SDK. This docume
 | `ralph-agent handoff` | Manually trigger a context handoff |
 | `ralph-agent regenerate-plan` | Regenerate the implementation plan from specs |
 | `ralph-agent history` | Show session history |
+| `ralph-agent memory` | Manage Ralph memory system |
 | `ralph-agent test` | Run tests using uv run pytest |
 | `ralph-agent lint` | Run linting using uv run ruff |
 | `ralph-agent typecheck` | Run type checking using uv run mypy |
@@ -1106,6 +1107,96 @@ ralph-agent history -p /path/to/project -n 20
 #### See Also
 
 - `status` - Show current state
+- `handoff` - Trigger a handoff
+- `memory` - View and manage memory system
+
+---
+
+### memory
+
+Manage Ralph memory system.
+
+#### Synopsis
+
+```
+ralph-agent memory [OPTIONS]
+```
+
+#### Description
+
+View, inspect, and manage Ralph's deterministic memory system. The memory system automatically captures context at:
+
+- **Phase transitions** - When moving between discovery/planning/building/validation
+- **Iteration boundaries** - At the end of each iteration within a phase
+- **Session handoffs** - When context budget is exceeded
+
+This command allows you to view the active memory content, see statistics about memory files, and run cleanup operations.
+
+#### Options
+
+| Option | Short | Type | Default | Description |
+|--------|-------|------|---------|-------------|
+| `--project-root` | `-p` | TEXT | `.` | Project root directory |
+| `--show` | `-s` | FLAG | `false` | Show active memory content |
+| `--stats` | | FLAG | `false` | Show memory statistics |
+| `--cleanup` | | FLAG | `false` | Run memory cleanup (rotate and archive) |
+| `--help` | | FLAG | | Show this message and exit |
+
+#### Examples
+
+```bash
+# Show active memory content (default if no flags provided)
+ralph-agent memory
+ralph-agent memory --show
+
+# Show memory file statistics
+ralph-agent memory --stats
+
+# Run memory cleanup (rotate old files to archive)
+ralph-agent memory --cleanup
+
+# View memory for another project
+ralph-agent memory -p /path/to/project --show
+
+# Combine options
+ralph-agent memory --stats --cleanup
+```
+
+#### Memory Directory Structure
+
+The memory system stores files in `.ralph/memory/`:
+
+```
+.ralph/
+├── MEMORY.md                 # Active memory (injected into prompts)
+└── memory/
+    ├── phases/               # Phase transition memories
+    │   ├── discovery.md
+    │   ├── planning.md
+    │   └── building.md
+    ├── iterations/           # Iteration memories
+    │   ├── iter-001.md
+    │   └── iter-002.md
+    ├── sessions/             # Session handoff memories
+    │   └── session-001.md
+    └── archive/              # Rotated old files
+```
+
+#### Configuration
+
+Memory behavior can be configured via the `MemoryConfig`:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `max_active_memory_chars` | 8,000 | Maximum characters in active memory |
+| `max_iteration_files` | 20 | Maximum iteration memory files before rotation |
+| `max_session_files` | 10 | Maximum session memory files before rotation |
+| `archive_retention_days` | 30 | Days to keep archived files |
+
+#### See Also
+
+- `status` - Show current state
+- `history` - View session history
 - `handoff` - Trigger a handoff
 
 ---

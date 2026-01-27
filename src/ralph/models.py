@@ -51,6 +51,7 @@ class Task:
     completion_notes: str | None = None
     completed_at: datetime | None = None
     retry_count: int = 0
+    spec_files: list[str] = field(default_factory=list)  # relative paths to spec files
 
     def is_available(self, completed_task_ids: set[str]) -> bool:
         """Check if task can be started (dependencies met)."""
@@ -234,26 +235,41 @@ class CircuitBreakerState:
 class ContextBudget:
     """Token budget tracking for context window management.
 
-    Targets 40-60% utilization (the "smart zone") and triggers
-    hand-off before reaching 80%.
+    Targets 80-85% utilization before triggering handoff (SPEC-005).
+    Provides warnings at 70% and emergency exit at 90%.
     """
 
     total_capacity: int = 200_000
     system_prompt_allocation: int = 5_000
-    safety_margin: float = 0.20  # Keep 20% buffer
+    safety_margin: float = 0.15  # Keep 15% buffer (was 20%)
+
+    # Configurable thresholds (SPEC-005)
+    handoff_threshold: float = 0.80  # Trigger handoff at 80% (was 60%)
+    warning_threshold: float = 0.70  # Warning at 70%
+    emergency_threshold: float = 0.90  # Emergency exit at 90%
 
     current_usage: int = 0
     tool_results_tokens: int = 0
 
     @property
     def effective_capacity(self) -> int:
-        """Capacity minus safety margin."""
+        """Capacity minus safety margin (85% with 15% margin)."""
         return int(self.total_capacity * (1 - self.safety_margin))
 
     @property
     def smart_zone_max(self) -> int:
-        """Upper bound of smart zone (60%)."""
-        return int(self.total_capacity * 0.60)
+        """Handoff threshold (80% by default, per SPEC-005)."""
+        return int(self.total_capacity * self.handoff_threshold)
+
+    @property
+    def warning_zone(self) -> int:
+        """Warning threshold (70%)."""
+        return int(self.total_capacity * self.warning_threshold)
+
+    @property
+    def emergency_zone(self) -> int:
+        """Emergency exit threshold (90%)."""
+        return int(self.total_capacity * self.emergency_threshold)
 
     @property
     def available_tokens(self) -> int:
@@ -268,8 +284,19 @@ class ContextBudget:
         return (self.current_usage / self.total_capacity) * 100
 
     def should_handoff(self) -> bool:
-        """Check if context hand-off is needed."""
+        """Check if context hand-off is needed (at 80% per SPEC-005)."""
         return self.current_usage >= self.smart_zone_max
+
+    def should_warn(self) -> bool:
+        """Check if warning should be shown (at 70%, below handoff)."""
+        return (
+            self.current_usage >= self.warning_zone
+            and self.current_usage < self.smart_zone_max
+        )
+
+    def should_emergency_exit(self) -> bool:
+        """Check if emergency exit is needed (at 90%)."""
+        return self.current_usage >= self.emergency_zone
 
     def add_usage(self, tokens: int) -> None:
         """Track token usage."""

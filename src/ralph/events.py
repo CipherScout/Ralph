@@ -65,6 +65,10 @@ class StreamEventType(str, Enum):
     WARNING = "warning"
     INFO = "info"
 
+    # Context budget events (SPEC-005)
+    CONTEXT_WARNING = "context_warning"  # Approaching context limit
+    CONTEXT_EMERGENCY = "context_emergency"  # At emergency limit
+
 
 @dataclass
 class StreamEvent:
@@ -362,4 +366,56 @@ def handoff_complete_event(
         type=StreamEventType.HANDOFF_COMPLETE,
         session_id=new_session_id,
         data={"memory_path": memory_path} if memory_path else {},
+    )
+
+
+def context_warning_event(
+    usage_percent: float,
+    current_tokens: int,
+    threshold_percent: float = 80.0,
+) -> StreamEvent:
+    """Create a CONTEXT_WARNING event when approaching limit (SPEC-005).
+
+    Args:
+        usage_percent: Current context usage as percentage
+        current_tokens: Current token count
+        threshold_percent: The handoff threshold percentage (default 80%)
+
+    Returns:
+        StreamEvent with context warning information
+    """
+    return StreamEvent(
+        type=StreamEventType.CONTEXT_WARNING,
+        data={
+            "usage_percent": usage_percent,
+            "current_tokens": current_tokens,
+            "threshold_percent": threshold_percent,
+            "message": (
+                f"Context at {usage_percent:.1f}% - "
+                f"approaching {threshold_percent:.0f}% limit"
+            ),
+        },
+    )
+
+
+def context_emergency_event(
+    usage_percent: float,
+    current_tokens: int,
+) -> StreamEvent:
+    """Create a CONTEXT_EMERGENCY event at critical limit (SPEC-005).
+
+    Args:
+        usage_percent: Current context usage as percentage
+        current_tokens: Current token count
+
+    Returns:
+        StreamEvent with emergency context information
+    """
+    return StreamEvent(
+        type=StreamEventType.CONTEXT_EMERGENCY,
+        data={
+            "usage_percent": usage_percent,
+            "current_tokens": current_tokens,
+            "message": f"Emergency: Context at {usage_percent:.1f}% - forcing handoff",
+        },
     )
