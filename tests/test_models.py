@@ -422,13 +422,13 @@ class TestContextBudget:
         """Available tokens calculated correctly."""
         budget = ContextBudget(total_capacity=200_000)
         assert budget.available_tokens == 170_000  # 85% effective capacity
-        budget.add_usage(50_000)
+        budget.set_usage(50_000)
         assert budget.available_tokens == 120_000
 
     def test_reset(self) -> None:
         """Reset clears usage tracking."""
         budget = ContextBudget()
-        budget.add_usage(100_000)
+        budget.set_usage(100_000)
         budget.tool_results_tokens = 5_000
         budget.reset()
         assert budget.current_usage == 0
@@ -477,7 +477,7 @@ class TestRalphState:
     def test_advance_phase(self) -> None:
         """Advancing phase updates phase and resets context."""
         state = RalphState(project_root=Path("/test"))
-        state.context_budget.add_usage(50_000)
+        state.context_budget.set_usage(50_000)
         state.advance_phase(Phase.VALIDATION)
         assert state.current_phase == Phase.VALIDATION
         assert state.context_budget.current_usage == 0

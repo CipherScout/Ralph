@@ -1283,9 +1283,10 @@ class TestContextBudgetNotDoubleCountedInStreamIteration:
     """Tests to ensure context budget is only updated by end_iteration(), not stream_iteration().
 
     Per Anthropic SDK docs, ResultMessage contains cumulative usage. The SDK client
-    should NOT call add_usage() directly - that's the responsibility of end_iteration()
+    should NOT modify context budget directly - that's the responsibility of end_iteration()
     which is called by the orchestration layer (executors/iteration.py).
 
+    The context budget uses SET semantics (not ADD) because SDK returns cumulative totals.
     This prevents double-counting tokens which can lead to false context budget exhaustion
     (e.g., showing 1118% utilization instead of ~116%).
     """
@@ -1326,41 +1327,38 @@ class TestContextBudgetNotDoubleCountedInStreamIteration:
         # Context budget should reflect the tokens used
         assert state.context_budget.current_usage == tokens_used
 
-    def test_double_add_usage_causes_incorrect_tracking(self) -> None:
-        """Demonstrate the bug that was fixed: calling add_usage twice doubles the count.
+    def test_set_usage_replaces_value_not_accumulates(self) -> None:
+        """Verify set_usage SETS the cumulative value from SDK, not accumulates.
 
-        Before the fix, stream_iteration() called add_usage(), then end_iteration()
-        called it again, resulting in 2x the actual token count.
+        The SDK returns cumulative totals. Calling set_usage multiple times
+        should SET to that value, not accumulate.
         """
         state = create_mock_state(context_usage=0)
         tokens_used = 100_000
 
-        # BUG SCENARIO (what happened before fix):
-        # Step 1: SDK client calls add_usage (SHOULD NOT DO THIS)
-        state.context_budget.add_usage(tokens_used)
-        # Step 2: Orchestrator calls end_iteration which calls add_usage again
-        state.context_budget.add_usage(tokens_used)
+        # Calling set_usage multiple times with SDK cumulative value
+        # should just SET to that value, not accumulate
+        state.context_budget.set_usage(tokens_used)
+        state.context_budget.set_usage(tokens_used)
 
-        # Result: Double-counted!
-        assert state.context_budget.current_usage == 200_000  # 2x the actual usage
-        assert state.context_budget.usage_percentage == 100.0  # Should be 50%!
+        # Result: Value is SET, not accumulated
+        assert state.context_budget.current_usage == 100_000  # Correct!
+        assert state.context_budget.usage_percentage == 50.0  # Correct!
 
-    def test_single_add_usage_gives_correct_tracking(self) -> None:
-        """Correct behavior: add_usage called only once via end_iteration().
+    def test_end_iteration_uses_set_semantics(self) -> None:
+        """Verify end_iteration sets context budget from SDK cumulative total.
 
-        After the fix, only end_iteration() updates the context budget.
+        The SDK's ResultMessage.usage contains cumulative totals. end_iteration
+        should SET (not add) this value to avoid double-counting across iterations.
         """
         state = create_mock_state(context_usage=0)
-        tokens_used = 100_000
 
-        # CORRECT SCENARIO (after fix):
-        # Only end_iteration updates the budget
-        state.end_iteration(
-            cost_usd=1.0,
-            tokens_used=tokens_used,
-            task_completed=False,
-        )
+        # Iteration 1: SDK reports 50k cumulative
+        state.end_iteration(cost_usd=0.5, tokens_used=50_000, task_completed=False)
+        assert state.context_budget.current_usage == 50_000
+        assert state.context_budget.usage_percentage == 25.0
 
-        # Result: Correct count
-        assert state.context_budget.current_usage == 100_000
+        # Iteration 2: SDK reports 100k cumulative (not 50k delta!)
+        state.end_iteration(cost_usd=0.5, tokens_used=100_000, task_completed=False)
+        assert state.context_budget.current_usage == 100_000  # SET to 100k, not 150k
         assert state.context_budget.usage_percentage == 50.0  # Correct!

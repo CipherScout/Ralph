@@ -298,9 +298,14 @@ class ContextBudget:
         """Check if emergency exit is needed (at 90%)."""
         return self.current_usage >= self.emergency_zone
 
-    def add_usage(self, tokens: int) -> None:
-        """Track token usage."""
-        self.current_usage += tokens
+    def set_usage(self, tokens: int) -> None:
+        """Set token usage to cumulative total from SDK.
+
+        The SDK's ResultMessage.usage contains cumulative totals for the
+        conversation, not per-iteration deltas. We SET (not add) to avoid
+        double-counting.
+        """
+        self.current_usage = tokens
 
     def reset(self) -> None:
         """Reset for new session."""
@@ -383,7 +388,7 @@ class RalphState:
         self.session_cost_usd += cost_usd
         self.session_tokens_used += tokens_used
         self.last_activity_at = datetime.now()
-        self.context_budget.add_usage(tokens_used)
+        self.context_budget.set_usage(tokens_used)
 
         if task_completed:
             self.tasks_completed_this_session += 1

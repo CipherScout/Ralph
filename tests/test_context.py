@@ -166,7 +166,7 @@ class TestBuildIterationContext:
         self, state: RalphState, plan_with_tasks: ImplementationPlan, project_path: Path
     ) -> None:
         """Calculates context usage percentage."""
-        state.context_budget.add_usage(100_000)
+        state.context_budget.set_usage(100_000)
         context = build_iteration_context(state, plan_with_tasks, project_path)
 
         assert context.usage_percentage == 50.0  # 100k / 200k
@@ -376,7 +376,7 @@ class TestShouldTriggerHandoff:
     def test_triggers_at_threshold(self, project_path: Path) -> None:
         """Triggers at context budget threshold (80% per SPEC-005)."""
         state = RalphState(project_root=project_path)
-        state.context_budget.add_usage(160_001)  # > 80% (SPEC-005 threshold)
+        state.context_budget.set_usage(160_001)  # > 80% (SPEC-005 threshold)
 
         should_trigger, reason = should_trigger_handoff(state)
         assert should_trigger is True
@@ -385,7 +385,7 @@ class TestShouldTriggerHandoff:
     def test_triggers_at_warning_level(self, project_path: Path) -> None:
         """Triggers at warning level (75%)."""
         state = RalphState(project_root=project_path)
-        state.context_budget.add_usage(150_001)  # > 75%
+        state.context_budget.set_usage(150_001)  # > 75%
 
         should_trigger, reason = should_trigger_handoff(state)
         assert should_trigger is True
@@ -395,7 +395,7 @@ class TestShouldTriggerHandoff:
     def test_no_trigger_below_threshold(self, project_path: Path) -> None:
         """No trigger below threshold."""
         state = RalphState(project_root=project_path)
-        state.context_budget.add_usage(100_000)  # 50%
+        state.context_budget.set_usage(100_000)  # 50%
 
         should_trigger, reason = should_trigger_handoff(state)
         assert should_trigger is False

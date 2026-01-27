@@ -1045,7 +1045,7 @@ class TestEdgeCasesAndErrorConditions:
         executor = PlanningExecutor(project_root)
 
         # Simulate context budget overflow
-        executor.state.context_budget.add_usage(150_000)  # Exceed limit
+        executor.state.context_budget.set_usage(150_000)  # Exceed limit
 
         # Mock client to simulate handoff need
         mock_client = AsyncMock()

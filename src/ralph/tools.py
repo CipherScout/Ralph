@@ -146,7 +146,7 @@ class RalphTools:
 
             # Update state
             state.tasks_completed_this_session += 1
-            # NOTE: Do NOT call add_usage() here - context budget is updated by end_iteration()
+            # NOTE: Do NOT call set_usage() here - context budget is updated by end_iteration()
             # which is called by the orchestration layer after each iteration completes.
 
             # Save both
