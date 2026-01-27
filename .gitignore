@@ -113,3 +113,4 @@ pip-delete-this-directory.txt
 .temp/
 
 .ralph/
+specs/
