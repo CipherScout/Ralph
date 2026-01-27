@@ -18,6 +18,8 @@ from ralph.config import RalphConfig, load_config
 from ralph.events import (
     StreamEvent,
     StreamEventType,
+    context_emergency_event,
+    context_warning_event,
     info_event,
     phase_change_event,
 )
@@ -793,6 +795,22 @@ Start by asking the user what they want to build."""
                     except StopAsyncIteration:
                         break
 
+                # After iteration ends, check context budget and emit events if needed
+                # (Budget is now updated by end_iteration in stream_iteration's finally block)
+                if self.state.context_budget.should_emergency_exit():
+                    yield context_emergency_event(
+                        usage_percent=self.state.context_budget.usage_percentage,
+                        current_tokens=self.state.context_budget.current_usage,
+                    )
+                    yield info_event("Emergency context limit reached - stopping execution")
+                    break
+                elif self.state.context_budget.should_warn():
+                    yield context_warning_event(
+                        usage_percent=self.state.context_budget.usage_percentage,
+                        current_tokens=self.state.context_budget.current_usage,
+                        threshold_percent=self.state.context_budget.handoff_threshold * 100,
+                    )
+
                 # Check for phase completion signal (from tool OR text)
                 # Reload state to check for completion signal
                 self._state = None  # Force reload
@@ -1110,6 +1128,21 @@ Start by reading the specs and analyzing the codebase."""
 
                     except StopAsyncIteration:
                         break
+
+                # After iteration ends, check context budget and emit events if needed
+                if self.state.context_budget.should_emergency_exit():
+                    yield context_emergency_event(
+                        usage_percent=self.state.context_budget.usage_percentage,
+                        current_tokens=self.state.context_budget.current_usage,
+                    )
+                    yield info_event("Emergency context limit reached - stopping execution")
+                    break
+                elif self.state.context_budget.should_warn():
+                    yield context_warning_event(
+                        usage_percent=self.state.context_budget.usage_percentage,
+                        current_tokens=self.state.context_budget.current_usage,
+                        threshold_percent=self.state.context_budget.handoff_threshold * 100,
+                    )
 
                 # Check for phase completion signal (from tool OR text)
                 self._state = None  # Force reload
@@ -1434,6 +1467,22 @@ Start implementing now."""
 
                     except StopAsyncIteration:
                         break
+
+                # After iteration ends, check context budget and emit events if needed
+                # (Budget is now updated by end_iteration in stream_iteration's finally block)
+                if self.state.context_budget.should_emergency_exit():
+                    yield context_emergency_event(
+                        usage_percent=self.state.context_budget.usage_percentage,
+                        current_tokens=self.state.context_budget.current_usage,
+                    )
+                    yield info_event("Emergency context limit reached - stopping execution")
+                    return
+                elif self.state.context_budget.should_warn():
+                    yield context_warning_event(
+                        usage_percent=self.state.context_budget.usage_percentage,
+                        current_tokens=self.state.context_budget.current_usage,
+                        threshold_percent=self.state.context_budget.handoff_threshold * 100,
+                    )
 
                 if iteration_task_completed:
                     tasks_completed += 1
@@ -1821,6 +1870,22 @@ If everything passes, confirm validation is complete."""
 
                     except StopAsyncIteration:
                         break
+
+                # After iteration ends, check context budget and emit events if needed
+                # (Budget is now updated by end_iteration in stream_iteration's finally block)
+                if self.state.context_budget.should_emergency_exit():
+                    yield context_emergency_event(
+                        usage_percent=self.state.context_budget.usage_percentage,
+                        current_tokens=self.state.context_budget.current_usage,
+                    )
+                    yield info_event("Emergency context limit reached - stopping execution")
+                    return
+                elif self.state.context_budget.should_warn():
+                    yield context_warning_event(
+                        usage_percent=self.state.context_budget.usage_percentage,
+                        current_tokens=self.state.context_budget.current_usage,
+                        threshold_percent=self.state.context_budget.handoff_threshold * 100,
+                    )
 
                 # Record success/failure for circuit breaker
                 if not iteration_success:
