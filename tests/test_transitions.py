@@ -447,3 +447,196 @@ class TestPromptPhaseTransition:
         result = await prompt_phase_transition(console, Phase.BUILDING, timeout_seconds=1)
 
         assert result == (False, None)
+
+    async def test_final_phase_with_project_root_offers_cleanup(
+        self, console, tmp_path, monkeypatch
+    ):
+        """When validation completes with project_root, cleanup should be offered."""
+        from ralph.persistence import initialize_state
+        from ralph.transitions import WorkflowCleanupPrompt, prompt_phase_transition
+
+        # Setup state
+        initialize_state(tmp_path)
+        assert (tmp_path / ".ralph" / "state.json").exists()
+
+        # Mock cleanup prompt to decline (so we can verify state preserved)
+        def mock_prompt(self, project_root):
+            return False, False  # decline cleanup
+
+        monkeypatch.setattr(WorkflowCleanupPrompt, "prompt", mock_prompt)
+
+        result = await prompt_phase_transition(
+            console,
+            Phase.VALIDATION,
+            timeout_seconds=0,
+            project_root=tmp_path,
+        )
+
+        # Should complete successfully
+        assert result == (True, None)
+        # State should still exist (cleanup declined)
+        assert (tmp_path / ".ralph" / "state.json").exists()
+
+    async def test_final_phase_cleanup_accepted(self, console, tmp_path, monkeypatch):
+        """When user accepts cleanup, state files should be removed."""
+        from ralph.persistence import initialize_state
+        from ralph.transitions import WorkflowCleanupPrompt, prompt_phase_transition
+
+        # Setup state
+        initialize_state(tmp_path)
+        assert (tmp_path / ".ralph" / "state.json").exists()
+
+        # Mock cleanup prompt to accept
+        def mock_prompt(self, project_root):
+            return True, False  # accept cleanup, don't include memory
+
+        monkeypatch.setattr(WorkflowCleanupPrompt, "prompt", mock_prompt)
+
+        result = await prompt_phase_transition(
+            console,
+            Phase.VALIDATION,
+            timeout_seconds=0,
+            project_root=tmp_path,
+        )
+
+        # Should complete successfully
+        assert result == (True, None)
+        # State should be removed
+        assert not (tmp_path / ".ralph" / "state.json").exists()
+
+    async def test_final_phase_without_project_root_skips_cleanup(self, console):
+        """When project_root is None, cleanup should be skipped."""
+        from ralph.transitions import prompt_phase_transition
+
+        # No project_root provided - should just show completion message
+        result = await prompt_phase_transition(
+            console,
+            Phase.VALIDATION,
+            timeout_seconds=0,
+            project_root=None,
+        )
+
+        # Should complete successfully without errors
+        assert result == (True, None)
+
+
+class TestWorkflowCleanupPrompt:
+    """Tests for WorkflowCleanupPrompt class."""
+
+    @pytest.fixture
+    def console(self):
+        """Create a Rich Console for testing."""
+        from rich.console import Console
+        return Console(file=open('/dev/null', 'w'))  # Suppress output
+
+    def test_non_interactive_mode_skips_cleanup(self, console, tmp_path, monkeypatch):
+        """In non-interactive mode, cleanup should be skipped."""
+        from ralph.transitions import WorkflowCleanupPrompt
+
+        # Mock sys.stdin.isatty to return False (non-interactive)
+        monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+        prompt = WorkflowCleanupPrompt(console)
+        should_cleanup, include_memory = prompt.prompt(tmp_path)
+
+        assert should_cleanup is False
+        assert include_memory is False
+
+    def test_user_declines_cleanup(self, console, tmp_path, monkeypatch):
+        """When user declines cleanup, should return False."""
+        from ralph.transitions import WorkflowCleanupPrompt
+
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+        # User says no to cleanup
+        monkeypatch.setattr("typer.confirm", lambda *args, **kwargs: False)
+
+        prompt = WorkflowCleanupPrompt(console)
+        should_cleanup, include_memory = prompt.prompt(tmp_path)
+
+        assert should_cleanup is False
+        assert include_memory is False
+
+    def test_user_accepts_cleanup_without_memory(self, console, tmp_path, monkeypatch):
+        """When user accepts cleanup but declines memory removal."""
+        from ralph.transitions import WorkflowCleanupPrompt
+
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+        # Track confirm calls
+        confirm_calls = []
+
+        def mock_confirm(*args, **kwargs):
+            confirm_calls.append(kwargs.get("default", True))
+            if len(confirm_calls) == 1:
+                return True  # Accept cleanup
+            elif len(confirm_calls) == 2:
+                return False  # Decline memory removal
+            else:
+                return True  # Final confirmation
+
+        monkeypatch.setattr("typer.confirm", mock_confirm)
+
+        prompt = WorkflowCleanupPrompt(console)
+        should_cleanup, include_memory = prompt.prompt(tmp_path)
+
+        assert should_cleanup is True
+        assert include_memory is False
+
+    def test_user_accepts_cleanup_with_memory(self, console, tmp_path, monkeypatch):
+        """When user accepts cleanup including memory removal."""
+        from ralph.transitions import WorkflowCleanupPrompt
+
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+
+        # Always return True
+        monkeypatch.setattr("typer.confirm", lambda *args, **kwargs: True)
+
+        prompt = WorkflowCleanupPrompt(console)
+        should_cleanup, include_memory = prompt.prompt(tmp_path)
+
+        assert should_cleanup is True
+        assert include_memory is True
+
+    def test_execute_cleanup_removes_files(self, console, tmp_path):
+        """Execute cleanup should remove state files."""
+        from ralph.persistence import initialize_state
+        from ralph.transitions import WorkflowCleanupPrompt
+
+        initialize_state(tmp_path)
+        assert (tmp_path / ".ralph" / "state.json").exists()
+
+        prompt = WorkflowCleanupPrompt(console)
+        result = prompt.execute_cleanup(tmp_path, include_memory=False)
+
+        assert result.success
+        assert not (tmp_path / ".ralph" / "state.json").exists()
+
+    def test_execute_cleanup_preserves_memory(self, console, tmp_path):
+        """Execute cleanup without memory flag preserves memory files."""
+        from ralph.persistence import initialize_state
+        from ralph.transitions import WorkflowCleanupPrompt
+
+        initialize_state(tmp_path)
+        ralph_dir = tmp_path / ".ralph"
+        (ralph_dir / "MEMORY.md").write_text("# Memory")
+
+        prompt = WorkflowCleanupPrompt(console)
+        result = prompt.execute_cleanup(tmp_path, include_memory=False)
+
+        assert result.success
+        assert (ralph_dir / "MEMORY.md").exists()
+
+    def test_execute_cleanup_removes_memory(self, console, tmp_path):
+        """Execute cleanup with memory flag removes memory files."""
+        from ralph.persistence import initialize_state
+        from ralph.transitions import WorkflowCleanupPrompt
+
+        initialize_state(tmp_path)
+        ralph_dir = tmp_path / ".ralph"
+        (ralph_dir / "MEMORY.md").write_text("# Memory")
+
+        prompt = WorkflowCleanupPrompt(console)
+        result = prompt.execute_cleanup(tmp_path, include_memory=True)
+
+        assert result.success
+        assert not (ralph_dir / "MEMORY.md").exists()

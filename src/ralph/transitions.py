@@ -10,14 +10,17 @@ import asyncio
 import contextlib
 import inspect
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+import typer
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
 from rich.text import Text
 
 from ralph.async_input_reader import AsyncInputReader
+from ralph.cleanup import CleanupResult, cleanup_state_files
 from ralph.models import Phase
 
 if TYPE_CHECKING:
@@ -316,10 +319,146 @@ class PhaseTransitionPrompt:
                 raise
 
 
+class WorkflowCleanupPrompt:
+    """Prompt for cleaning up state after workflow completion."""
+
+    def __init__(self, console: Console) -> None:
+        """Initialize the cleanup prompt.
+
+        Args:
+            console: Rich Console for display
+        """
+        self.console = console
+
+    def _render_cleanup_preview(self, include_memory: bool) -> Panel:
+        """Render information about what will be cleaned up.
+
+        Args:
+            include_memory: Whether memory files are included
+
+        Returns:
+            Rich Panel showing cleanup preview
+        """
+        text = Text()
+        text.append("The following files will be ", style="white")
+        text.append("removed", style="bold red")
+        text.append(":\n\n", style="white")
+
+        text.append("  \u2022 .ralph/state.json\n", style="dim")
+        text.append("  \u2022 .ralph/implementation_plan.json\n", style="dim")
+        text.append("  \u2022 .ralph/injections.json\n", style="dim")
+        text.append("  \u2022 progress.txt\n", style="dim")
+
+        if include_memory:
+            text.append("\n  \u2022 .ralph/MEMORY.md\n", style="dim yellow")
+            text.append("  \u2022 .ralph/memory/ (directory)\n", style="dim yellow")
+
+        text.append("\n", style="white")
+        text.append("Configuration (.ralph/config.yaml) will be ", style="white")
+        text.append("preserved", style="bold green")
+        text.append(".", style="white")
+
+        return Panel(
+            text,
+            title="[bold]Cleanup Preview[/bold]",
+            border_style="yellow",
+        )
+
+    def prompt(self, project_root: Path) -> tuple[bool, bool]:
+        """Prompt user for cleanup decision.
+
+        Args:
+            project_root: Path to project root
+
+        Returns:
+            Tuple of (should_cleanup, include_memory)
+        """
+        # Non-interactive mode - don't cleanup by default
+        if not sys.stdin.isatty():
+            self.console.print(
+                "\n[yellow]Non-interactive mode: skipping cleanup prompt[/yellow]"
+            )
+            return False, False
+
+        self.console.print()  # Blank line after workflow complete
+
+        # First prompt: cleanup state?
+        should_cleanup = typer.confirm(
+            "Clean up workflow state for a fresh start?",
+            default=False,
+        )
+
+        if not should_cleanup:
+            self.console.print(
+                "[dim]State preserved. Run 'ralph reset' later if needed.[/dim]"
+            )
+            return False, False
+
+        # Second prompt: include memory?
+        include_memory = typer.confirm(
+            "Also remove session memory (MEMORY.md)?",
+            default=False,
+        )
+
+        # Show what will be cleaned
+        self.console.print(self._render_cleanup_preview(include_memory))
+
+        # Final confirmation
+        final_confirm = typer.confirm("Proceed with cleanup?", default=True)
+
+        if not final_confirm:
+            self.console.print("[dim]Cleanup cancelled.[/dim]")
+            return False, False
+
+        return True, include_memory
+
+    def execute_cleanup(
+        self,
+        project_root: Path,
+        include_memory: bool,
+    ) -> CleanupResult:
+        """Execute the cleanup and display results.
+
+        Args:
+            project_root: Path to project root
+            include_memory: Whether to include memory files
+
+        Returns:
+            CleanupResult with details of what was deleted
+        """
+        result = cleanup_state_files(project_root, include_memory)
+
+        if result.any_cleaned:
+            self.console.print()
+            for deleted in result.files_deleted:
+                self.console.print(f"[green]\u2713 Deleted: {deleted}[/green]")
+
+        if result.errors:
+            self.console.print()
+            for error in result.errors:
+                self.console.print(f"[red]\u2717 Error: {error}[/red]")
+
+        if result.success and result.any_cleaned:
+            self.console.print()
+            self.console.print(
+                Panel(
+                    "[bold green]Cleanup complete![/bold green]\n\n"
+                    "Run 'ralph init' to start a new workflow.",
+                    title="[bold]Ready for Next Project[/bold]",
+                    border_style="green",
+                )
+            )
+        elif not result.any_cleaned:
+            self.console.print("[dim]No files to clean up.[/dim]")
+
+        return result
+
+
 async def prompt_phase_transition(
     console: Console,
     current_phase: Phase,
     timeout_seconds: int = 60,
+    project_root: Path | None = None,
 ) -> tuple[bool, Phase | None]:
     """Prompt user for phase transition with countdown.
 
@@ -327,6 +466,7 @@ async def prompt_phase_transition(
         console: Rich Console for display
         current_phase: The phase that just completed
         timeout_seconds: Seconds to wait before auto-continuing
+        project_root: Path to project root (for cleanup on final phase)
 
     Returns:
         Tuple of (should_continue, next_phase)
@@ -337,7 +477,7 @@ async def prompt_phase_transition(
     next_phase = get_next_phase(current_phase)
 
     if next_phase is None:
-        # Final phase - no transition needed
+        # Final phase - show completion and offer cleanup
         console.print(
             Panel(
                 "[bold green]All phases complete![/bold green]\n\n"
@@ -346,6 +486,15 @@ async def prompt_phase_transition(
                 border_style="green",
             )
         )
+
+        # Offer cleanup if project_root provided
+        if project_root is not None:
+            cleanup_prompt = WorkflowCleanupPrompt(console)
+            should_cleanup, include_memory = cleanup_prompt.prompt(project_root)
+
+            if should_cleanup:
+                cleanup_prompt.execute_cleanup(project_root, include_memory)
+
         return True, None
 
     prompt = PhaseTransitionPrompt(

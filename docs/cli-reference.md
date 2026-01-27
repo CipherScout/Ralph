@@ -11,6 +11,7 @@ Ralph is a deterministic agentic coding loop using Claude Agent SDK. This docume
 | `ralph-agent status` | Show current Ralph state |
 | `ralph-agent tasks` | List tasks in the implementation plan |
 | `ralph-agent reset` | Reset Ralph state to initial values |
+| `ralph-agent clean` | Clean up Ralph state files for a fresh start |
 | `ralph-agent run` | Run the full Ralph loop |
 | `ralph-agent discover` | Run the Discovery phase with JTBD framework |
 | `ralph-agent plan` | Run the Planning phase with gap analysis |
@@ -219,6 +220,78 @@ ralph-agent reset -p /path/to/project
 
 - `init` - Initialize a fresh Ralph project
 - `regenerate-plan` - Regenerate plan without full reset
+- `clean` - Clean up state files completely
+
+---
+
+### clean
+
+Clean up Ralph state files for a fresh start.
+
+#### Synopsis
+
+```
+ralph-agent clean [OPTIONS]
+```
+
+#### Description
+
+Removes all Ralph state files (state.json, implementation_plan.json, injections.json, and progress.txt) to achieve an init-equivalent state. Configuration files (config.yaml) are always preserved.
+
+This command is useful when you want to start completely fresh without manually deleting files, or after completing a development cycle.
+
+#### Options
+
+| Option | Short | Type | Default | Description |
+|--------|-------|------|---------|-------------|
+| `--project-root` | `-p` | TEXT | `.` | Project root directory |
+| `--memory` | `-m` | FLAG | `false` | Also remove memory files (MEMORY.md, memory/) |
+| `--force` | `-f` | FLAG | `false` | Skip confirmation prompt |
+| `--dry-run` | | FLAG | `false` | Show what would be cleaned without deleting |
+| `--help` | | FLAG | | Show this message and exit |
+
+#### Examples
+
+```bash
+# Clean state files with confirmation prompt
+ralph-agent clean
+
+# Preview what would be cleaned without deleting
+ralph-agent clean --dry-run
+
+# Clean without confirmation (for scripts)
+ralph-agent clean --force
+
+# Clean state files and memory
+ralph-agent clean --memory
+
+# Clean everything including memory, no confirmation
+ralph-agent clean --memory --force
+
+# Clean a project in another directory
+ralph-agent clean -p /path/to/project
+```
+
+#### What Gets Cleaned
+
+**Always removed (if they exist):**
+- `.ralph/state.json` - Current phase, iteration count, flags
+- `.ralph/implementation_plan.json` - Task list and dependencies
+- `.ralph/injections.json` - Injected context messages
+- `progress.txt` - Operational learnings log
+
+**Removed only with `--memory` flag:**
+- `.ralph/MEMORY.md` - Active memory content
+- `.ralph/memory/` - Memory directory with all memory files
+
+**Always preserved:**
+- `.ralph/config.yaml` - User configuration
+- `.ralph/` directory itself
+
+#### See Also
+
+- `init` - Initialize a fresh Ralph project
+- `reset` - Reset state values without removing files
 
 ---
 

@@ -524,9 +524,11 @@ ralph-agent pause              # Pause after current iteration
 ralph-agent resume             # Resume paused loop
 ralph-agent inject "message"   # Add guidance for next iteration
 
-# Reset state
+# Reset and cleanup
 ralph-agent reset              # Full reset
 ralph-agent reset --keep-plan  # Reset but keep task list
+ralph-agent clean              # Clean up state files
+ralph-agent clean --memory     # Also clean memory files
 ```
 
 ---
@@ -550,6 +552,7 @@ If you encounter issues:
 1. Check status: `ralph-agent status --verbose`
 2. Review session history: `ralph-agent history`
 3. Check the `progress.txt` file for operational learnings
-4. Reset if needed: `ralph-agent reset`
+4. Clean up for fresh start: `ralph-agent clean`
+5. Reset if needed: `ralph-agent reset`
 
 For bugs or feature requests, please open an issue on GitHub.

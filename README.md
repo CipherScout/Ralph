@@ -91,6 +91,9 @@ uv run ralph-agent tasks [--pending] [--all]
 
 # Reset state to initial values
 uv run ralph-agent reset [--keep-plan]
+
+# Clean up state files for a fresh start
+uv run ralph-agent clean [--memory] [--force] [--dry-run]
 ```
 
 ### Phase Commands
@@ -391,7 +394,16 @@ cat progress.txt | tail -20
 If recovery attempts fail, you can reset completely:
 
 ```bash
-# Reset state but keep the plan
+# Clean up all state files (recommended for fresh start)
+uv run ralph-agent clean
+
+# Clean up state files including memory
+uv run ralph-agent clean --memory
+
+# Preview what would be cleaned
+uv run ralph-agent clean --dry-run
+
+# Reset state but keep the plan (alternative to clean)
 uv run ralph-agent reset --keep-plan
 
 # Full reset (removes plan too)

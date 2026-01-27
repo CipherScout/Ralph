@@ -49,6 +49,49 @@ class TestInit:
         assert "state.json" in result.stdout
         assert "implementation_plan.json" in result.stdout
 
+    def test_init_creates_config_yaml(self, tmp_path: Path) -> None:
+        """Test init creates .ralph/config.yaml with defaults."""
+        result = runner.invoke(app, ["init", "-p", str(tmp_path)])
+        assert result.exit_code == 0
+        assert (tmp_path / ".ralph" / "config.yaml").exists()
+        assert "config.yaml" in result.stdout
+
+        # Verify config content
+        import yaml
+
+        with open(tmp_path / ".ralph" / "config.yaml") as f:
+            config = yaml.safe_load(f)
+        assert "project" in config
+        assert "build" in config
+        assert "phases" in config
+        assert config["project"]["name"] == tmp_path.name
+
+    def test_init_preserves_existing_config(self, tmp_path: Path) -> None:
+        """Test init with --force preserves existing config.yaml."""
+        # First init
+        result = runner.invoke(app, ["init", "-p", str(tmp_path)])
+        assert result.exit_code == 0
+
+        # Modify config
+        import yaml
+
+        config_path = tmp_path / ".ralph" / "config.yaml"
+        with open(config_path) as f:
+            config = yaml.safe_load(f)
+        config["project"]["name"] = "custom-name"
+        with open(config_path, "w") as f:
+            yaml.dump(config, f)
+
+        # Reinit with force
+        result = runner.invoke(app, ["init", "-p", str(tmp_path), "--force"])
+        assert result.exit_code == 0
+        assert "already exists" in result.stdout
+
+        # Verify config was preserved
+        with open(config_path) as f:
+            config = yaml.safe_load(f)
+        assert config["project"]["name"] == "custom-name"
+
     def test_init_refuses_reinit_without_force(self, tmp_path: Path) -> None:
         """Test init refuses to reinitialize without --force."""
         # First init
@@ -962,3 +1005,127 @@ class TestRalphLiveDisplaySpinner:
         assert len(start_calls) >= 3, f"Expected at least 3 starts, got {len(start_calls)}"
         # At least 4 stops (text, tool_use_start, tool_use_end, text)
         assert len(stop_calls) >= 4, f"Expected at least 4 stops, got {len(stop_calls)}"
+
+
+class TestClean:
+    """Tests for clean command."""
+
+    def test_clean_no_ralph_dir(self, tmp_path: Path) -> None:
+        """Test clean with no .ralph directory exits gracefully."""
+        result = runner.invoke(app, ["clean", "-p", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "not initialized" in result.stdout.lower()
+        assert "nothing to clean" in result.stdout.lower()
+
+    def test_clean_no_state_files(self, tmp_path: Path) -> None:
+        """Test clean when no state files exist."""
+        (tmp_path / ".ralph").mkdir()
+        result = runner.invoke(app, ["clean", "-p", str(tmp_path)])
+        assert result.exit_code == 0
+        assert "no state files" in result.stdout.lower()
+
+    def test_clean_dry_run_shows_preview(self, tmp_path: Path) -> None:
+        """Test clean --dry-run shows files without deleting."""
+        initialize_state(tmp_path)
+        initialize_plan(tmp_path)
+
+        result = runner.invoke(app, ["clean", "-p", str(tmp_path), "--dry-run"])
+        assert result.exit_code == 0
+        assert "dry run" in result.stdout.lower()
+        assert "state.json" in result.stdout
+        # Files should still exist
+        assert (tmp_path / ".ralph" / "state.json").exists()
+        assert (tmp_path / ".ralph" / "implementation_plan.json").exists()
+
+    def test_clean_aborts_on_no_confirm(self, tmp_path: Path) -> None:
+        """Test clean aborts when user declines confirmation."""
+        initialize_state(tmp_path)
+
+        result = runner.invoke(app, ["clean", "-p", str(tmp_path)], input="n\n")
+        assert result.exit_code == 0
+        assert "cancelled" in result.stdout.lower()
+        # Files should still exist
+        assert (tmp_path / ".ralph" / "state.json").exists()
+
+    def test_clean_deletes_state_on_confirm(self, tmp_path: Path) -> None:
+        """Test clean deletes state files on confirmation."""
+        initialize_state(tmp_path)
+        initialize_plan(tmp_path)
+
+        result = runner.invoke(app, ["clean", "-p", str(tmp_path)], input="y\n")
+        assert result.exit_code == 0
+        assert "deleted" in result.stdout.lower()
+        assert not (tmp_path / ".ralph" / "state.json").exists()
+        assert not (tmp_path / ".ralph" / "implementation_plan.json").exists()
+
+    def test_clean_force_skips_confirmation(self, tmp_path: Path) -> None:
+        """Test clean --force skips confirmation prompt."""
+        initialize_state(tmp_path)
+
+        result = runner.invoke(app, ["clean", "-p", str(tmp_path), "--force"])
+        assert result.exit_code == 0
+        assert "proceed with cleanup" not in result.stdout.lower()
+        assert not (tmp_path / ".ralph" / "state.json").exists()
+
+    def test_clean_preserves_config(self, tmp_path: Path) -> None:
+        """Test clean preserves config.yaml."""
+        initialize_state(tmp_path)
+        config_path = tmp_path / ".ralph" / "config.yaml"
+        config_path.write_text("project:\n  name: test")
+
+        result = runner.invoke(app, ["clean", "-p", str(tmp_path), "--force"])
+        assert result.exit_code == 0
+        assert config_path.exists()
+
+    def test_clean_memory_flag_removes_memory(self, tmp_path: Path) -> None:
+        """Test clean --memory removes memory files."""
+        initialize_state(tmp_path)
+        memory_path = tmp_path / ".ralph" / "MEMORY.md"
+        memory_path.write_text("# Memory")
+        memory_dir = tmp_path / ".ralph" / "memory"
+        memory_dir.mkdir()
+        (memory_dir / "test.md").write_text("test")
+
+        result = runner.invoke(
+            app, ["clean", "-p", str(tmp_path), "--memory", "--force"]
+        )
+        assert result.exit_code == 0
+        assert not memory_path.exists()
+        assert not memory_dir.exists()
+
+    def test_clean_without_memory_preserves_memory(self, tmp_path: Path) -> None:
+        """Test clean without --memory preserves memory files."""
+        initialize_state(tmp_path)
+        memory_path = tmp_path / ".ralph" / "MEMORY.md"
+        memory_path.write_text("# Memory")
+
+        result = runner.invoke(app, ["clean", "-p", str(tmp_path), "--force"])
+        assert result.exit_code == 0
+        assert memory_path.exists()
+
+    def test_clean_shows_success_panel(self, tmp_path: Path) -> None:
+        """Test clean shows success panel after completion."""
+        initialize_state(tmp_path)
+
+        result = runner.invoke(app, ["clean", "-p", str(tmp_path), "--force"])
+        assert result.exit_code == 0
+        assert "cleanup complete" in result.stdout.lower()
+        assert "ralph init" in result.stdout.lower()
+
+    def test_clean_preserves_ralph_directory(self, tmp_path: Path) -> None:
+        """Test clean preserves .ralph directory itself."""
+        initialize_state(tmp_path)
+
+        result = runner.invoke(app, ["clean", "-p", str(tmp_path), "--force"])
+        assert result.exit_code == 0
+        assert (tmp_path / ".ralph").exists()
+
+    def test_clean_deletes_progress_txt(self, tmp_path: Path) -> None:
+        """Test clean deletes progress.txt from project root."""
+        initialize_state(tmp_path)
+        progress_path = tmp_path / "progress.txt"
+        progress_path.write_text("Some progress")
+
+        result = runner.invoke(app, ["clean", "-p", str(tmp_path), "--force"])
+        assert result.exit_code == 0
+        assert not progress_path.exists()

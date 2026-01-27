@@ -1298,13 +1298,16 @@ uv run ralph-agent status
 uv run ralph-agent run
 ```
 
-If you need a complete reset:
+If you need a complete reset (removing all state files):
 
 ```bash
-# Full reset (removes everything)
-uv run ralph-agent reset
+# Option A: Use the clean command (recommended)
+uv run ralph-agent clean              # Remove state files, keep config
+uv run ralph-agent clean --memory     # Also remove memory files
+uv run ralph-agent init               # Reinitialize
 
-# Reinitialize
+# Option B: Full reset using reset command
+uv run ralph-agent reset
 uv run ralph-agent init --force
 ```
 
@@ -1405,21 +1408,32 @@ Start fresh when:
 Steps for a clean start:
 
 ```bash
-# 1. Backup anything important
-cp -r .ralph .ralph.backup.$(date +%Y%m%d)
-cp MEMORY.md MEMORY.md.backup
+# 1. Preview what will be cleaned (recommended)
+uv run ralph-agent clean --dry-run
 
-# 2. Clean up
-rm -rf .ralph
-rm -f MEMORY.md progress.txt
+# 2. Clean up state files (preserves config.yaml)
+uv run ralph-agent clean
 
-# 3. Reinitialize
+# 3. Or clean up including memory files
+uv run ralph-agent clean --memory
+
+# 4. Reinitialize
 uv run ralph-agent init
 
-# 4. Start from discovery (or your desired phase)
+# 5. Start from discovery (or your desired phase)
 uv run ralph-agent discover --goal "Your goal"
 # OR jump to planning if you have specs
 uv run ralph-agent plan
+```
+
+Alternative manual cleanup (not recommended):
+
+```bash
+# Manual cleanup only if `clean` command fails
+cp -r .ralph .ralph.backup.$(date +%Y%m%d)
+rm -rf .ralph
+rm -f MEMORY.md progress.txt
+uv run ralph-agent init
 ```
 
 ---
@@ -1467,6 +1481,9 @@ df -h .
 
 # Check permissions
 ls -la .ralph/
+
+# Preview cleanup targets
+uv run ralph-agent clean --dry-run
 ```
 
 ### Example Diagnostic Session

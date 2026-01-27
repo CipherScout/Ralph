@@ -519,8 +519,20 @@ def init(
     state = initialize_state(path)
     plan = initialize_plan(path)
 
-    console.print("[green]✓ Created .ralph/state.json[/green]")
-    console.print("[green]✓ Created .ralph/implementation_plan.json[/green]")
+    # Create default config if it doesn't exist
+    from ralph.config import create_default_config, load_config
+
+    config_path = path / ".ralph" / "config.yaml"
+    if not config_path.exists():
+        create_default_config(path, project_name=path.name)
+        console.print("[green]\u2713 Created .ralph/config.yaml[/green]")
+    else:
+        # Load existing config to validate it
+        load_config(path)
+        console.print("[dim]\u2713 .ralph/config.yaml already exists[/dim]")
+
+    console.print("[green]\u2713 Created .ralph/state.json[/green]")
+    console.print("[green]\u2713 Created .ralph/implementation_plan.json[/green]")
     console.print("[green]Ralph initialized successfully![/green]")
     console.print(f"\n[dim]Current phase: {state.current_phase.value}[/dim]")
     console.print(f"[dim]Tasks in plan: {len(plan.tasks)}[/dim]")
@@ -765,6 +777,109 @@ def reset(
         console.print("[green]✓ Plan reset[/green]")
 
     console.print("[green]Ralph reset complete[/green]")
+
+
+@app.command()
+def clean(
+    project_root: str = typer.Option(
+        ".", "--project-root", "-p", help="Project root directory"
+    ),
+    memory: bool = typer.Option(
+        False, "--memory", "-m", help="Also remove memory files (MEMORY.md, memory/)"
+    ),
+    force: bool = typer.Option(
+        False, "--force", "-f", help="Skip confirmation prompt"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would be cleaned without deleting"
+    ),
+) -> None:
+    """Clean up Ralph state files for a fresh start.
+
+    Removes state.json, implementation_plan.json, injections.json, and progress.txt.
+    Configuration (config.yaml) is always preserved.
+
+    Use --memory to also remove MEMORY.md and memory/ directory.
+    Use --dry-run to preview what would be cleaned.
+    Use --force to skip confirmation prompt.
+
+    Examples:
+        ralph clean              # Clean state files with confirmation
+        ralph clean --memory     # Also clean memory files
+        ralph clean --dry-run    # Preview without deleting
+        ralph clean --force      # Skip confirmation
+    """
+    from ralph.cleanup import cleanup_state_files, get_cleanup_targets
+
+    try:
+        path = _resolve_project_root(project_root)
+    except typer.BadParameter as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1) from None
+
+    # Check if Ralph is initialized
+    ralph_dir = path / ".ralph"
+    if not ralph_dir.exists():
+        console.print(f"[yellow]Ralph not initialized in {path}[/yellow]")
+        console.print("Nothing to clean.")
+        raise typer.Exit(0)
+
+    # Get cleanup targets and check what exists
+    targets = get_cleanup_targets(path, include_memory=memory)
+    existing_targets = [t for t in targets if t.exists()]
+
+    if not existing_targets:
+        console.print("[dim]No state files found to clean.[/dim]")
+        raise typer.Exit(0)
+
+    # Show preview
+    console.print("\n[bold]Files to clean:[/bold]")
+    for target in targets:
+        if target.exists():
+            console.print(f"  [red]• {target}[/red]")
+        else:
+            console.print(f"  [dim]• {target} (not found)[/dim]")
+
+    console.print(
+        f"\n[dim]Configuration ({ralph_dir / 'config.yaml'}) will be preserved.[/dim]"
+    )
+
+    if dry_run:
+        console.print("\n[yellow]Dry run - no files deleted.[/yellow]")
+        raise typer.Exit(0)
+
+    # Confirmation (unless --force)
+    if not force:
+        console.print()
+        confirmed = typer.confirm("Proceed with cleanup?", default=False)
+        if not confirmed:
+            console.print("[dim]Cleanup cancelled.[/dim]")
+            raise typer.Exit(0)
+
+    # Execute cleanup
+    result = cleanup_state_files(path, include_memory=memory)
+
+    # Report results
+    console.print()
+    for deleted in result.files_deleted:
+        console.print(f"[green]✓ Deleted: {deleted}[/green]")
+
+    for error in result.errors:
+        console.print(f"[red]✗ Error: {error}[/red]")
+
+    if result.success and result.any_cleaned:
+        console.print(
+            Panel(
+                "[bold green]Cleanup complete![/bold green]\n\n"
+                "Run 'ralph init' to start fresh.",
+                border_style="green",
+            )
+        )
+    elif result.errors:
+        console.print("\n[yellow]Cleanup completed with errors.[/yellow]")
+        raise typer.Exit(1)
+    else:
+        console.print("[dim]No files were cleaned.[/dim]")
 
 
 # ============================================================================
@@ -1763,9 +1878,10 @@ def validate(
         raise typer.Exit(1)
 
     # Show workflow completion message (VALIDATION is the final phase)
+    # Pass project_root to enable cleanup prompt
     from ralph.transitions import prompt_phase_transition
 
-    asyncio.run(prompt_phase_transition(console, Phase.VALIDATION, 0))
+    asyncio.run(prompt_phase_transition(console, Phase.VALIDATION, 0, project_root=path))
 
 
 @app.command("regenerate-plan")

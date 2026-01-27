@@ -1,53 +1,56 @@
-# Product Requirements Document: Ralph Agentic Loop Reliability & Determinism Enhancement
+# Product Requirements Document: Ralph Agent Harness Improvements
 
 ## Overview
-Fix critical reliability, determinism, and usability issues in the Ralph agentic coding loop to create a production-ready, predictable development automation system. The current implementation has validation stagnation, incomplete tool access, poor memory utilization, and state management issues that prevent deterministic execution.
+Transform Ralph from a basic coding loop into a deterministic, predictable agent harness with robust state management, proper cost tracking, optimized context usage, and reliable phase transitions.
 
 ## Business Context
-- **Problem Statement**: Ralph's agentic loop has multiple reliability issues causing stagnation, wasted work, and non-deterministic behavior that undermines its value as a development automation tool.
-- **Target Users**: Developers using Ralph for automated coding workflows who need reliable, predictable, and deterministic execution.
+- **Problem Statement**: Ralph suffers from multiple reliability and usability issues including validation stagnation, poor memory management, inaccurate cost tracking, and phase restrictions that prevent optimal workflow execution
+- **Target Users**: Developers, automation engineers, and project managers using Ralph for automated coding workflows who need reliability and predictability
 - **Success Metrics**:
-  - Validation phase completes without stagnation
-  - All phases have full tool access
-  - Spec files are properly utilized throughout the loop
-  - Memory system provides consistent context handoffs
-  - Cost and token tracking works accurately
+  - 100% reliable phase transitions without stagnation
+  - Deterministic memory handoffs between sessions/iterations/phases
+  - Accurate token and cost tracking throughout workflows
+  - Optimal context window utilization (80-85%)
+  - Clean state management and file organization
 
 ## Jobs to Be Done
 
 | Job ID | Description | Spec File |
 |--------|-------------|-----------|
-| JTBD-001 | Fix validation phase stagnation and improve exit conditions | [SPEC-001-validation-reliability](./SPEC-001-validation-reliability.md) |
-| JTBD-002 | Enable all Claude Agent SDK tools across all phases | [SPEC-002-tool-access-parity](./SPEC-002-tool-access-parity.md) |
-| JTBD-003 | Integrate spec files into building phase task context | [SPEC-003-spec-integration](./SPEC-003-spec-integration.md) |
-| JTBD-004 | Implement deterministic memory management system | [SPEC-004-memory-system](./SPEC-004-memory-system.md) |
-| JTBD-005 | Fix context window utilization and completion detection | [SPEC-005-context-optimization](./SPEC-005-context-optimization.md) |
-| JTBD-006 | Implement proper cost and token tracking | [SPEC-006-cost-tracking](./SPEC-006-cost-tracking.md) |
-| JTBD-007 | Add automated state cleanup system | [SPEC-007-state-cleanup](./SPEC-007-state-cleanup.md) |
-| JTBD-008 | Add ralph-agent clean CLI command | [SPEC-008-clean-command](./SPEC-008-clean-command.md) |
-| JTBD-009 | Move progress.txt to .ralph directory | [SPEC-009-file-organization](./SPEC-009-file-organization.md) |
+| JTBD-001 | When the phase transition timer expires, automatically continue to next phase without user input | [SPEC-001-auto-transition-timer](./SPEC-001-auto-transition-timer.md) |
+| JTBD-002 | When testing phase transition logic, verify behavior without incurring Claude SDK costs | [SPEC-002-test-coverage](./SPEC-002-test-coverage.md) |
+| JTBD-003 | When user presses Enter or 'n' during countdown, immediately handle input without race conditions | [SPEC-003-input-handling](./SPEC-003-input-handling.md) |
+| JTBD-004 | When Ralph is executing workflows, optimize context consumption and implement completion signals for better resource utilization | [SPEC-004-context-optimization](./SPEC-004-context-optimization.md) |
+| JTBD-005 | When Ralph transitions between sessions/iterations/phases, ensure deterministic memory management by the agent harness | [SPEC-005-memory-system-integration](./SPEC-005-memory-system-integration.md) |
+| JTBD-006 | When Ralph is executing in any phase, provide access to all tools regardless of phase restrictions | [SPEC-006-tool-phase-restrictions](./SPEC-006-tool-phase-restrictions.md) |
+| JTBD-007 | When Ralph reaches validation phase, ensure efficient progress without getting stuck in loops | [SPEC-007-validation-stagnation-fix](./SPEC-007-validation-stagnation-fix.md) |
+| JTBD-008 | When Ralph executes workflows, provide accurate token and cost tracking throughout all phases | [SPEC-008-cost-tracking-fix](./SPEC-008-cost-tracking-fix.md) |
+| JTBD-009 | When a Ralph workflow cycle completes, provide option to clean up state files for fresh starts | [SPEC-009-state-cleanup-system](./SPEC-009-state-cleanup-system.md) |
+| JTBD-010 | When I want to reset Ralph to clean state, provide a CLI command similar to 'ralph-agent init' | [SPEC-010-cli-clean-command](./SPEC-010-cli-clean-command.md) |
+| JTBD-011 | When Ralph creates progress tracking files, store them in .ralph/ directory for consistent organization | [SPEC-011-progress-file-location](./SPEC-011-progress-file-location.md) |
 
 ## Business Rules
-1. **Deterministic Execution**: All phases must execute predictably with consistent results
-2. **Tool Parity**: Every phase must have access to all available Claude Agent SDK tools
-3. **Context Preservation**: Spec files and memory must be accessible throughout the entire loop
-4. **Resource Tracking**: All token usage and costs must be accurately measured and reported
-5. **Clean State Management**: State files must be properly organized and cleanupable
-6. **TDD Compliance**: All changes must follow test-driven development practices
-7. **Backwards Compatibility**: User-facing interfaces (CLI, outputs, animations) must remain unchanged
+1. **Deterministic Memory Management**: Memory creation/reading MUST be handled by Ralph harness code, not left to LLM decisions
+2. **Tool Universality**: ALL tools must be available in ALL phases without artificial restrictions
+3. **Context Optimization**: Context consumption should reach 80-85% before triggering handoffs
+4. **Cost Transparency**: Accurate token and cost tracking is mandatory for all operations
+5. **State Cleanliness**: All Ralph artifacts must be contained within .ralph/ directory
+6. **Completion Reliability**: Phase transitions must complete reliably without stagnation
 
 ## Global Constraints
-- **Technical**: Must use Claude Agent SDK, maintain existing architecture patterns, preserve all 554+ existing tests
-- **Timeline**: Fix all issues in a single comprehensive refactor to avoid partial-state problems
-- **Quality**: Must maintain or improve test coverage, fix all existing lint/type errors
+- **Technical**: Must use Claude Agent SDK APIs for context measurement, cost tracking, and completion promises
+- **Compatibility**: Must maintain backward compatibility with existing workflows and state files
+- **Testing**: Must follow TDD approach with comprehensive test coverage before code changes
+- **Documentation**: Must use context7 MCP server to research Claude Agent SDK documentation
 
 ## Non-Goals (Explicit Exclusions)
-- Changes to user-facing CLI commands, arguments, or output formats
-- Modifications to Ralph's core phase structure (Discovery → Planning → Building → Validation)
-- Changes to the fundamental MCP tool integration patterns
-- UI/UX changes to animations, progress indicators, or terminal output styling
+- Changing Ralph's core four-phase workflow (Discovery, Planning, Building, Validation)
+- Modifying the fundamental agent architecture or SDK integration patterns
+- Adding new phases or fundamentally altering the workflow structure
+- Changing file formats in breaking ways
 
 ## References
 - [TECHNICAL_ARCHITECTURE.md](./TECHNICAL_ARCHITECTURE.md)
-- Original issue analysis: `/Users/pradeep/Documents/code/personal/Ralph/PROMPT.md`
-- Existing codebase: `/Users/pradeep/Documents/code/personal/Ralph/src/ralph/`
+- Claude Agent SDK documentation via context7 MCP server
+- Issue evidence in PROMPT.md appendix logs
+- Existing Ralph codebase patterns and conventions
