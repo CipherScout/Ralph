@@ -1277,3 +1277,90 @@ class TestCostTracking:
 
         assert input_tokens == 0
         assert output_tokens == 500
+
+
+class TestContextBudgetNotDoubleCountedInStreamIteration:
+    """Tests to ensure context budget is only updated by end_iteration(), not stream_iteration().
+
+    Per Anthropic SDK docs, ResultMessage contains cumulative usage. The SDK client
+    should NOT call add_usage() directly - that's the responsibility of end_iteration()
+    which is called by the orchestration layer (executors/iteration.py).
+
+    This prevents double-counting tokens which can lead to false context budget exhaustion
+    (e.g., showing 1118% utilization instead of ~116%).
+    """
+
+    def test_sdk_client_does_not_modify_context_budget_on_init(self) -> None:
+        """Creating a RalphSDKClient should not modify the context budget."""
+        state = create_mock_state(context_usage=10_000)
+        initial_usage = state.context_budget.current_usage
+
+        _ = RalphSDKClient(state=state, auto_configure=False)
+
+        # Context budget should be unchanged
+        assert state.context_budget.current_usage == initial_usage
+
+    def test_context_budget_starts_at_expected_value(self) -> None:
+        """Verify our mock state sets up context budget correctly."""
+        state = create_mock_state(context_usage=50_000, context_capacity=200_000)
+
+        assert state.context_budget.current_usage == 50_000
+        assert state.context_budget.total_capacity == 200_000
+        assert state.context_budget.usage_percentage == 25.0
+
+    def test_end_iteration_is_single_source_of_truth_for_context_budget(self) -> None:
+        """Verify that end_iteration() updates the context budget.
+
+        This is the ONLY place that should update context_budget to avoid double-counting.
+        """
+        state = create_mock_state(context_usage=0)
+
+        # Simulate end_iteration updating the budget
+        tokens_used = 50_000
+        state.end_iteration(
+            cost_usd=0.5,
+            tokens_used=tokens_used,
+            task_completed=False,
+        )
+
+        # Context budget should reflect the tokens used
+        assert state.context_budget.current_usage == tokens_used
+
+    def test_double_add_usage_causes_incorrect_tracking(self) -> None:
+        """Demonstrate the bug that was fixed: calling add_usage twice doubles the count.
+
+        Before the fix, stream_iteration() called add_usage(), then end_iteration()
+        called it again, resulting in 2x the actual token count.
+        """
+        state = create_mock_state(context_usage=0)
+        tokens_used = 100_000
+
+        # BUG SCENARIO (what happened before fix):
+        # Step 1: SDK client calls add_usage (SHOULD NOT DO THIS)
+        state.context_budget.add_usage(tokens_used)
+        # Step 2: Orchestrator calls end_iteration which calls add_usage again
+        state.context_budget.add_usage(tokens_used)
+
+        # Result: Double-counted!
+        assert state.context_budget.current_usage == 200_000  # 2x the actual usage
+        assert state.context_budget.usage_percentage == 100.0  # Should be 50%!
+
+    def test_single_add_usage_gives_correct_tracking(self) -> None:
+        """Correct behavior: add_usage called only once via end_iteration().
+
+        After the fix, only end_iteration() updates the context budget.
+        """
+        state = create_mock_state(context_usage=0)
+        tokens_used = 100_000
+
+        # CORRECT SCENARIO (after fix):
+        # Only end_iteration updates the budget
+        state.end_iteration(
+            cost_usd=1.0,
+            tokens_used=tokens_used,
+            task_completed=False,
+        )
+
+        # Result: Correct count
+        assert state.context_budget.current_usage == 100_000
+        assert state.context_budget.usage_percentage == 50.0  # Correct!

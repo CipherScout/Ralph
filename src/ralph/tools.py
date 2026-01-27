@@ -146,8 +146,8 @@ class RalphTools:
 
             # Update state
             state.tasks_completed_this_session += 1
-            if tokens_used:
-                state.context_budget.add_usage(tokens_used)
+            # NOTE: Do NOT call add_usage() here - context budget is updated by end_iteration()
+            # which is called by the orchestration layer after each iteration completes.
 
             # Save both
             self._save_plan(plan)

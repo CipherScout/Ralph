@@ -798,40 +798,43 @@ class RalphSDKClient:
                 get_model_for_phase(current_phase, self.config),
             )
 
-        # Update context budget with tokens used
-        self.state.context_budget.add_usage(total_tokens)
+        # NOTE: Do NOT call add_usage() here - that's the responsibility of end_iteration()
+        # which is called by the orchestration layer (executors/iteration.py).
+        # The SDK client only extracts and returns metrics; state updates happen in one place.
 
         # Check for context warnings and emit events (SPEC-005)
+        # Use projected usage (current + this iteration's tokens) for threshold checks
         needs_handoff = False
-        if self.state.context_budget.should_emergency_exit():
+        projected_usage = self.state.context_budget.current_usage + total_tokens
+        projected_percent = (
+            (projected_usage / self.state.context_budget.total_capacity) * 100
+            if self.state.context_budget.total_capacity > 0
+            else 0.0
+        )
+
+        if projected_usage >= self.state.context_budget.emergency_zone:
             yield context_emergency_event(
-                usage_percent=self.state.context_budget.usage_percentage,
-                current_tokens=self.state.context_budget.current_usage,
+                usage_percent=projected_percent,
+                current_tokens=projected_usage,
             )
             needs_handoff = True
-        elif self.state.context_budget.should_handoff():
+        elif projected_usage >= self.state.context_budget.smart_zone_max:
             needs_handoff = True
-        elif self.state.context_budget.should_warn():
+        elif projected_usage >= self.state.context_budget.warning_zone:
             yield context_warning_event(
-                usage_percent=self.state.context_budget.usage_percentage,
-                current_tokens=self.state.context_budget.current_usage,
+                usage_percent=projected_percent,
+                current_tokens=projected_usage,
                 threshold_percent=self.state.context_budget.handoff_threshold * 100,
             )
 
         # Capture session memory at handoff (SPEC-004 + SPEC-005)
         if needs_handoff and self.memory_manager is not None:
             try:
-                # Determine handoff reason
-                if self.state.context_budget.should_emergency_exit():
-                    handoff_reason = (
-                        f"Emergency: Context at "
-                        f"{self.state.context_budget.usage_percentage:.1f}%"
-                    )
+                # Determine handoff reason (use projected values since budget not yet updated)
+                if projected_usage >= self.state.context_budget.emergency_zone:
+                    handoff_reason = f"Emergency: Context at {projected_percent:.1f}%"
                 else:
-                    handoff_reason = (
-                        f"Context budget threshold "
-                        f"({self.state.context_budget.usage_percentage:.1f}%)"
-                    )
+                    handoff_reason = f"Context budget threshold ({projected_percent:.1f}%)"
 
                 # Load plan for memory capture
                 from ralph.persistence import load_plan
