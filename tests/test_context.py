@@ -16,7 +16,6 @@ from ralph.context import (
     generate_memory_content,
     load_injections,
     load_memory_file,
-    load_progress_file,
     load_session_history,
     should_trigger_handoff,
     write_memory_file,
@@ -94,38 +93,6 @@ class TestLoadMemoryFile:
         result = load_memory_file(project_path)
         assert result is not None
         assert "Test content" in result
-
-
-class TestLoadProgressFile:
-    """Tests for load_progress_file."""
-
-    def test_returns_empty_when_missing(self, project_path: Path) -> None:
-        """Returns empty list when progress.txt doesn't exist."""
-        result = load_progress_file(project_path)
-        assert result == []
-
-    def test_loads_progress_entries(self, project_path: Path) -> None:
-        """Loads progress entries."""
-        progress_path = project_path / "progress.txt"
-        progress_path.write_text(
-            "[2025-01-15] PATTERN: Test pattern\n"
-            "[2025-01-15] DEBUG: Test debug\n"
-        )
-
-        result = load_progress_file(project_path)
-        assert len(result) == 2
-        assert "PATTERN" in result[0]
-
-    def test_limits_entries(self, project_path: Path) -> None:
-        """Limits entries to max_entries."""
-        progress_path = project_path / "progress.txt"
-        lines = [f"[2025-01-15] Entry {i}" for i in range(30)]
-        progress_path.write_text("\n".join(lines))
-
-        result = load_progress_file(project_path, max_entries=10)
-        assert len(result) == 10
-        # Should be most recent entries
-        assert "Entry 29" in result[-1]
 
 
 class TestInjections:
@@ -462,7 +429,6 @@ class TestIterationContext:
             total_completed_tasks=0,
             total_pending_tasks=5,
             memory_content=None,
-            progress_learnings=[],
             injections=[],
             remaining_tokens=100_000,
             usage_percentage=50.0,

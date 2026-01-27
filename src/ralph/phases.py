@@ -586,7 +586,6 @@ You are in the BUILDING phase of the Ralph development loop.
 
 **Session Memory is provided above.** To save learnings for future sessions:
 - Use `mcp__ralph__ralph_update_memory` to save important context
-- Use `mcp__ralph__ralph_append_learning` for specific learnings
 
 **DO NOT use**: Read/Write/Edit for `.ralph/MEMORY.md`, or external memory tools.
 
@@ -655,7 +654,6 @@ These commands MUST pass before marking task complete:
 - Git operations are READ-ONLY (no commit, push, merge)
 - Run tests after EVERY change
 - Keep changes focused on the current task
-- Document any learnings with ralph_append_learning
 
 ## Completion
 When the task is done:

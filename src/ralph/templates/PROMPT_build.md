@@ -23,9 +23,7 @@ To save memory for future sessions:
 
 2. **Check current task** - Use `mcp__ralph__ralph_get_next_task` to confirm your current task assignment.
 
-3. **Review .ralph/progress.txt** - If it exists, check for learnings from previous sessions.
-
-4. **Understand the codebase** - Read relevant existing code before making changes.
+3. **Understand the codebase** - Read relevant existing code before making changes.
 
 ## Context
 - **Project Root**: {project_root}
@@ -100,7 +98,6 @@ Before marking task complete, ALL must pass:
 - `mcp__ralph__ralph_get_next_task` - Get next available task
 - `mcp__ralph__ralph_mark_task_complete` - Mark current task done
 - `mcp__ralph__ralph_mark_task_blocked` - Mark task as blocked
-- `mcp__ralph__ralph_append_learning` - Record insights
 - `mcp__ralph__ralph_get_plan_summary` - Get current plan status
 - `mcp__ralph__ralph_signal_building_complete` - Signal when all building is done
 - `mcp__ralph__ralph_update_memory` - Save context for future sessions
@@ -177,17 +174,6 @@ When the implementation plan is fully complete:
 
 DO NOT just say "building complete" in text - USE THE TOOL to signal completion.
 
-## Learnings
-
-Record important discoveries using `mcp__ralph__ralph_append_learning`:
-```
-mcp__ralph__ralph_append_learning(
-    category="PATTERN",
-    content="Database queries use repository pattern in src/db/"
-)
-```
-
-Categories: PATTERN, DEBUG, ARCHITECTURE, BLOCKERS, DECISIONS
 
 ## Avoiding Repetition
 

@@ -796,7 +796,7 @@ def clean(
 ) -> None:
     """Clean up Ralph state files for a fresh start.
 
-    Removes state.json, implementation_plan.json, injections.json, and progress.txt.
+    Removes state.json, implementation_plan.json, and injections.json.
     Configuration (config.yaml) is always preserved.
 
     Use --memory to also remove MEMORY.md and memory/ directory.

@@ -46,8 +46,6 @@ The Discovery phase should have produced these standardized documents:
 
 5. **Check current plan** - Use `mcp__ralph__ralph_get_plan_summary` to see what tasks already exist.
 
-6. **Review .ralph/progress.txt** - If it exists, check for learnings from previous sessions.
-
 ## Context
 - **Project Root**: {project_root}
 - **Project Name**: {project_name}

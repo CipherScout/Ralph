@@ -16,7 +16,6 @@ from typing import Any
 from ralph.models import ImplementationPlan, Phase, RalphState, TaskStatus
 
 # Default limits (can be overridden via config)
-DEFAULT_MAX_PROGRESS_ENTRIES = 20
 DEFAULT_MAX_FILES_IN_MEMORY = 10
 DEFAULT_MAX_SESSION_HISTORY = 50
 
@@ -71,7 +70,6 @@ class IterationContext:
 
     # Memory from previous sessions
     memory_content: str | None
-    progress_learnings: list[str]
 
     # Injections (user guidance, test failures, etc.)
     injections: list[ContextInjection]
@@ -94,29 +92,6 @@ def load_memory_file(project_root: Path) -> str | None:
     if memory_path.exists():
         return memory_path.read_text()
     return None
-
-
-def load_progress_file(
-    project_root: Path,
-    max_entries: int = DEFAULT_MAX_PROGRESS_ENTRIES,
-) -> list[str]:
-    """Load recent entries from progress.txt.
-
-    Args:
-        project_root: Path to project root
-        max_entries: Maximum entries to load (most recent).
-            Defaults to DEFAULT_MAX_PROGRESS_ENTRIES (20).
-
-    Returns:
-        List of progress entries
-    """
-    progress_path = project_root / "progress.txt"
-    if not progress_path.exists():
-        return []
-
-    lines = progress_path.read_text().strip().split("\n")
-    # Return most recent entries
-    return lines[-max_entries:] if lines else []
 
 
 def load_injections(project_root: Path) -> list[ContextInjection]:
@@ -242,7 +217,6 @@ def build_iteration_context(
         total_completed_tasks=plan.complete_count,
         total_pending_tasks=plan.pending_count,
         memory_content=load_memory_file(project_root),
-        progress_learnings=load_progress_file(project_root),
         injections=load_injections(project_root),
         remaining_tokens=state.context_budget.available_tokens,
         usage_percentage=usage_pct,

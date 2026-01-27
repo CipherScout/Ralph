@@ -305,51 +305,6 @@ class RalphTools:
                 error=str(e),
             )
 
-    def append_learning(
-        self,
-        learning: str,
-        category: str = "pattern",
-    ) -> ToolResult:
-        """Record a learning for future iterations.
-
-        Appends to progress.txt for operational learnings.
-
-        Args:
-            learning: The learning to record
-            category: Category (pattern, antipattern, architecture, debugging, build)
-
-        Returns:
-            ToolResult indicating success or failure
-        """
-        valid_categories = {"pattern", "antipattern", "architecture", "debugging", "build"}
-        if category not in valid_categories:
-            return ToolResult(
-                success=False,
-                content=f"Invalid category: {category}",
-                error=f"Category must be one of: {', '.join(valid_categories)}",
-            )
-
-        try:
-            progress_file = self.project_root / "progress.txt"
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            entry = f"[{timestamp}] {category.upper()}: {learning}\n"
-
-            # Append to file (create if doesn't exist)
-            with open(progress_file, "a") as f:
-                f.write(entry)
-
-            return ToolResult(
-                success=True,
-                content=f"Learning recorded: {learning[:50]}...",
-                data={"category": category, "timestamp": timestamp},
-            )
-        except Exception as e:
-            return ToolResult(
-                success=False,
-                content="Failed to record learning",
-                error=str(e),
-            )
-
     def get_plan_summary(self) -> ToolResult:
         """Get a summary of the current implementation plan.
 
@@ -699,22 +654,6 @@ TOOL_DEFINITIONS = [
                 "reason": {"type": "string", "description": "Reason why the task is blocked"},
             },
             "required": ["task_id", "reason"],
-        },
-    },
-    {
-        "name": "ralph_append_learning",
-        "description": "Record a learning for future iterations",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "learning": {"type": "string", "description": "The learning to record"},
-                "category": {
-                    "type": "string",
-                    "enum": ["pattern", "antipattern", "architecture", "debugging", "build"],
-                    "description": "Category of the learning",
-                },
-            },
-            "required": ["learning"],
         },
     },
     {

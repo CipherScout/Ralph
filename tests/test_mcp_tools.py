@@ -6,15 +6,12 @@ import pytest
 
 from ralph.mcp_tools import (
     MAX_DESCRIPTION_LENGTH,
-    MAX_LEARNING_LENGTH,
     MAX_MEMORY_CONTENT_LENGTH,
     MAX_TASK_ID_LENGTH,
     RALPH_MCP_TOOLS,
-    VALID_CATEGORIES,
     VALID_MEMORY_MODES,
     ValidationError,
     _format_result,
-    _validate_category,
     _validate_dependencies,
     _validate_priority,
     _validate_task_id,
@@ -22,7 +19,6 @@ from ralph.mcp_tools import (
     _validate_verification_criteria,
     get_ralph_tool_names,
     ralph_add_task,
-    ralph_append_learning,
     ralph_get_next_task,
     ralph_get_plan_summary,
     ralph_get_state_summary,
@@ -158,34 +154,6 @@ class TestValidatePriority:
         """Invalid strings are rejected."""
         with pytest.raises(ValidationError, match="must be an integer"):
             _validate_priority("high")
-
-
-class TestValidateCategory:
-    """Tests for category validation."""
-
-    def test_valid_categories(self) -> None:
-        """Valid categories are accepted."""
-        for category in VALID_CATEGORIES:
-            assert _validate_category(category) == category
-
-    def test_case_insensitive(self) -> None:
-        """Categories are case insensitive."""
-        assert _validate_category("PATTERN") == "pattern"
-        assert _validate_category("Pattern") == "pattern"
-
-    def test_strips_whitespace(self) -> None:
-        """Whitespace is stripped."""
-        assert _validate_category("  pattern  ") == "pattern"
-
-    def test_rejects_invalid_category(self) -> None:
-        """Invalid categories are rejected."""
-        with pytest.raises(ValidationError, match="must be one of"):
-            _validate_category("invalid")
-
-    def test_rejects_non_string(self) -> None:
-        """Non-string values are rejected."""
-        with pytest.raises(ValidationError, match="must be a string"):
-            _validate_category(123)
 
 
 class TestValidateDependencies:
@@ -427,49 +395,6 @@ class TestRalphMarkTaskInProgress:
     async def test_validates_task_id(self) -> None:
         """Validates task ID."""
         result = await ralph_mark_task_in_progress.handler({"task_id": 123})
-        assert "is_error" in result
-
-
-class TestRalphAppendLearning:
-    """Tests for ralph_append_learning tool."""
-
-    @pytest.mark.asyncio
-    async def test_appends_learning(self) -> None:
-        """Appends learning successfully."""
-        mock_tools = MagicMock()
-        mock_tools.append_learning.return_value = ToolResult(
-            success=True, content="Learning recorded"
-        )
-
-        with patch("ralph.mcp_tools._ralph_tools", mock_tools):
-            result = await ralph_append_learning.handler(
-                {"learning": "Use async/await for IO", "category": "pattern"}
-            )
-
-        assert "content" in result
-        mock_tools.append_learning.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_validates_learning_content(self) -> None:
-        """Validates learning content."""
-        result = await ralph_append_learning.handler({"learning": "", "category": "pattern"})
-        assert "is_error" in result
-
-    @pytest.mark.asyncio
-    async def test_validates_category(self) -> None:
-        """Validates category."""
-        result = await ralph_append_learning.handler(
-            {"learning": "Some learning", "category": "invalid"}
-        )
-        assert "is_error" in result
-
-    @pytest.mark.asyncio
-    async def test_rejects_too_long_learning(self) -> None:
-        """Rejects too-long learning content."""
-        long_learning = "a" * (MAX_LEARNING_LENGTH + 1)
-        result = await ralph_append_learning.handler(
-            {"learning": long_learning, "category": "pattern"}
-        )
         assert "is_error" in result
 
 
@@ -789,7 +714,6 @@ class TestGetRalphToolNames:
         assert "mcp__ralph__ralph_mark_task_complete" in names
         assert "mcp__ralph__ralph_mark_task_blocked" in names
         assert "mcp__ralph__ralph_mark_task_in_progress" in names
-        assert "mcp__ralph__ralph_append_learning" in names
         assert "mcp__ralph__ralph_get_plan_summary" in names
         assert "mcp__ralph__ralph_get_state_summary" in names
         assert "mcp__ralph__ralph_add_task" in names
@@ -832,19 +756,6 @@ class TestValidationConstants:
         """Description max length is reasonable."""
         assert MAX_DESCRIPTION_LENGTH >= 100
         assert MAX_DESCRIPTION_LENGTH <= 100_000
-
-    def test_learning_max_length_reasonable(self) -> None:
-        """Learning max length is reasonable."""
-        assert MAX_LEARNING_LENGTH >= 100
-        assert MAX_LEARNING_LENGTH <= 10_000
-
-    def test_valid_categories_not_empty(self) -> None:
-        """Valid categories set is not empty."""
-        assert len(VALID_CATEGORIES) > 0
-
-    def test_pattern_is_valid_category(self) -> None:
-        """Pattern is a valid category."""
-        assert "pattern" in VALID_CATEGORIES
 
 
 class TestRalphUpdateMemory:

@@ -347,7 +347,6 @@ class WorkflowCleanupPrompt:
         text.append("  \u2022 .ralph/state.json\n", style="dim")
         text.append("  \u2022 .ralph/implementation_plan.json\n", style="dim")
         text.append("  \u2022 .ralph/injections.json\n", style="dim")
-        text.append("  \u2022 progress.txt\n", style="dim")
 
         if include_memory:
             text.append("\n  \u2022 .ralph/MEMORY.md\n", style="dim yellow")

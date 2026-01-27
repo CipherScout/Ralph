@@ -256,45 +256,6 @@ class TestIncrementRetry:
         assert task.status == TaskStatus.PENDING
 
 
-class TestAppendLearning:
-    """Tests for append_learning tool."""
-
-    def test_appends_to_progress_file(self, tools: RalphTools, project_path: Path) -> None:
-        """Appends learning to progress.txt."""
-        result = tools.append_learning("Use Pydantic for API responses", "pattern")
-
-        assert result.success is True
-        assert result.data["category"] == "pattern"
-
-        progress_file = project_path / "progress.txt"
-        assert progress_file.exists()
-        content = progress_file.read_text()
-        assert "PATTERN: Use Pydantic" in content
-
-    def test_validates_category(self, tools: RalphTools) -> None:
-        """Validates learning category."""
-        result = tools.append_learning("Some learning", "invalid_category")
-        assert result.success is False
-        assert "invalid category" in result.content.lower()
-
-    def test_accepts_all_valid_categories(self, tools: RalphTools, project_path: Path) -> None:
-        """Accepts all valid categories."""
-        categories = ["pattern", "antipattern", "architecture", "debugging", "build"]
-        for cat in categories:
-            result = tools.append_learning(f"Learning for {cat}", cat)
-            assert result.success is True, f"Category {cat} should be valid"
-
-    def test_multiple_learnings_append(self, tools: RalphTools, project_path: Path) -> None:
-        """Multiple learnings append to file."""
-        tools.append_learning("First learning", "pattern")
-        tools.append_learning("Second learning", "debugging")
-
-        content = (project_path / "progress.txt").read_text()
-        assert "First learning" in content
-        assert "Second learning" in content
-        assert content.count("\n") >= 2
-
-
 class TestGetPlanSummary:
     """Tests for get_plan_summary tool."""
 
@@ -406,7 +367,6 @@ class TestToolDefinitions:
             "ralph_get_next_task",
             "ralph_mark_task_complete",
             "ralph_mark_task_blocked",
-            "ralph_append_learning",
             "ralph_get_plan_summary",
             "ralph_get_state_summary",
             "ralph_add_task",

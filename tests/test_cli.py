@@ -1120,12 +1120,3 @@ class TestClean:
         assert result.exit_code == 0
         assert (tmp_path / ".ralph").exists()
 
-    def test_clean_deletes_progress_txt(self, tmp_path: Path) -> None:
-        """Test clean deletes progress.txt from project root."""
-        initialize_state(tmp_path)
-        progress_path = tmp_path / "progress.txt"
-        progress_path.write_text("Some progress")
-
-        result = runner.invoke(app, ["clean", "-p", str(tmp_path), "--force"])
-        assert result.exit_code == 0
-        assert not progress_path.exists()

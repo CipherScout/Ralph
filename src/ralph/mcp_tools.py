@@ -19,9 +19,7 @@ from ralph.tools import RalphTools, ToolResult
 TASK_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 MAX_TASK_ID_LENGTH = 100
 MAX_DESCRIPTION_LENGTH = 5000
-MAX_LEARNING_LENGTH = 2000
 MAX_MEMORY_CONTENT_LENGTH = 10_000
-VALID_CATEGORIES = {"pattern", "antipattern", "architecture", "debugging", "build"}
 VALID_MEMORY_MODES = {"replace", "append"}
 
 
@@ -81,17 +79,6 @@ def _validate_priority(priority: Any) -> int:
     if validated_priority > 1000:
         raise ValidationError("priority too high (max 1000)")
     return validated_priority
-
-
-def _validate_category(category: Any) -> str:
-    """Validate and return learning category."""
-    if not isinstance(category, str):
-        raise ValidationError(f"category must be a string, got {type(category).__name__}")
-    validated_category: str = category.lower().strip()
-    if validated_category not in VALID_CATEGORIES:
-        valid_list = ", ".join(sorted(VALID_CATEGORIES))
-        raise ValidationError(f"category must be one of: {valid_list}")
-    return validated_category
 
 
 def _validate_dependencies(dependencies: Any) -> list[str] | None:
@@ -287,35 +274,6 @@ async def ralph_mark_task_in_progress(args: dict[str, Any]) -> dict[str, Any]:
 
     tools = _get_tools()
     result = tools.mark_task_in_progress(task_id=task_id)
-    return _format_result(result)
-
-
-@tool(
-    "ralph_append_learning",
-    "Record a learning for future iterations (patterns, antipatterns, debugging insights)",
-    {
-        "learning": str,
-        "category": str,
-    },
-)
-async def ralph_append_learning(args: dict[str, Any]) -> dict[str, Any]:
-    """Append a learning to progress.txt."""
-    try:
-        learning = args.get("learning", "")
-        if not learning or not str(learning).strip():
-            raise ValidationError("learning cannot be empty")
-        learning = str(learning).strip()
-        if len(learning) > MAX_LEARNING_LENGTH:
-            raise ValidationError(f"learning too long (max {MAX_LEARNING_LENGTH} chars)")
-        category = _validate_category(args.get("category", "pattern"))
-    except ValidationError as e:
-        return {"content": [{"type": "text", "text": f"Validation error: {e}"}], "is_error": True}
-
-    tools = _get_tools()
-    result = tools.append_learning(
-        learning=learning,
-        category=category,
-    )
     return _format_result(result)
 
 
@@ -625,7 +583,6 @@ RALPH_MCP_TOOLS = [
     ralph_mark_task_complete,
     ralph_mark_task_blocked,
     ralph_mark_task_in_progress,
-    ralph_append_learning,
     ralph_get_plan_summary,
     ralph_get_state_summary,
     ralph_add_task,
@@ -672,7 +629,6 @@ def get_ralph_tool_names(server_name: str = "ralph") -> list[str]:
         "ralph_mark_task_complete",
         "ralph_mark_task_blocked",
         "ralph_mark_task_in_progress",
-        "ralph_append_learning",
         "ralph_get_plan_summary",
         "ralph_get_state_summary",
         "ralph_add_task",

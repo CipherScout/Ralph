@@ -90,9 +90,6 @@ Marks a task complete with optional notes and token tracking.
 ### ralph_mark_task_blocked
 Marks a task as blocked with a reason.
 
-### ralph_append_learning
-Records learnings to progress.txt for future sessions.
-
 ### ralph_add_task
 Adds a new task to the plan (used in planning phase).
 
@@ -167,9 +164,6 @@ Ralph implements a circuit breaker to prevent runaway loops:
 
 ### MEMORY.md
 Markdown file containing session context for LLM to read.
-
-### progress.txt
-Append-only log of learnings and patterns.
 
 ## Cost Control
 

@@ -25,8 +25,6 @@ To save memory for future sessions:
 
 3. **Check plan status** - Use `mcp__ralph__ralph_get_plan_summary` to understand what was built.
 
-4. **Review .ralph/progress.txt** - If it exists, check for learnings from previous sessions.
-
 ## Context
 - **Project Root**: {project_root}
 - **Project Name**: {project_name}

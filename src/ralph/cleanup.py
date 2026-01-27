@@ -50,9 +50,6 @@ def get_cleanup_targets(project_root: Path, include_memory: bool = False) -> lis
     targets.append(ralph_dir / "implementation_plan.json")
     targets.append(ralph_dir / "injections.json")
 
-    # Progress file (currently at project root)
-    targets.append(project_root / "progress.txt")
-
     # Memory files (optional)
     if include_memory:
         targets.append(ralph_dir / "MEMORY.md")

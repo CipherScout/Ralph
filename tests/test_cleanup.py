@@ -56,7 +56,6 @@ class TestGetCleanupTargets:
         assert any("state.json" in t for t in target_strs)
         assert any("implementation_plan.json" in t for t in target_strs)
         assert any("injections.json" in t for t in target_strs)
-        assert any("progress.txt" in t for t in target_strs)
 
     def test_excludes_memory_by_default(self, tmp_path: Path) -> None:
         """Memory files excluded by default."""
@@ -163,16 +162,6 @@ class TestCleanupStateFiles:
         assert not (tmp_path / ".ralph" / "memory").exists()
         assert any("memory" in f for f in result.files_deleted)
 
-    def test_deletes_progress_file(self, tmp_path: Path) -> None:
-        """Deletes progress.txt from project root."""
-        progress_path = tmp_path / "progress.txt"
-        progress_path.write_text("Some learnings")
-
-        result = cleanup_state_files(tmp_path)
-
-        assert not progress_path.exists()
-        assert any("progress.txt" in f for f in result.files_deleted)
-
     def test_deletes_injections_file(self, tmp_path: Path) -> None:
         """Deletes injections.json when it exists."""
         ralph_dir = tmp_path / ".ralph"
@@ -225,7 +214,6 @@ class TestCleanupIntegration:
         assert not (ralph_dir / "MEMORY.md").exists()
         assert not (ralph_dir / "injections.json").exists()
         assert not (ralph_dir / "memory").exists()
-        assert not (tmp_path / "progress.txt").exists()
 
         # Config preserved
         assert (ralph_dir / "config.yaml").exists()

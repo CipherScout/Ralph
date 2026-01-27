@@ -23,8 +23,6 @@ To save memory for future sessions:
 
 2. **Check specs/ directory** - List what spec files already exist so you don't duplicate work.
 
-3. **Review .ralph/progress.txt** - If it exists, check for learnings from previous sessions.
-
 ## Context
 - **Project Root**: {project_root}
 - **Project Name**: {project_name}
