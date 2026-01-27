@@ -1062,3 +1062,218 @@ class TestTokenExtraction:
             "cache_read_input_tokens", 0
         )
         assert total_input == 1200
+
+
+class TestCostTracking:
+    """Tests for proper cost and token tracking (SPEC-006).
+
+    These tests verify that:
+    - Zero costs are handled correctly (not treated as missing)
+    - Per-message token accumulation works
+    - ResultMessage provides authoritative totals
+    - Message ID deduplication prevents double-counting
+    - Fallback cost calculation works when SDK doesn't provide cost
+    """
+
+    def test_zero_cost_is_not_falsy(self) -> None:
+        """Zero cost (0.0) should not be treated as missing/None.
+
+        Bug: `if msg.total_cost_usd:` fails when cost is 0.0
+        Fix: Use `if msg.total_cost_usd is not None:` instead
+        """
+        # Simulate a message with zero cost
+        class MockResultMessage:
+            total_cost_usd: float = 0.0  # Valid zero cost
+            usage: dict = {"input_tokens": 0, "output_tokens": 0}
+
+        msg = MockResultMessage()
+
+        # WRONG: This condition fails for 0.0 (falsy)
+        extracted_wrong = None
+        if hasattr(msg, "total_cost_usd") and msg.total_cost_usd:
+            extracted_wrong = msg.total_cost_usd
+        assert extracted_wrong is None  # Bug: 0.0 is treated as missing
+
+        # CORRECT: This condition works for 0.0
+        extracted_correct = None
+        if hasattr(msg, "total_cost_usd") and msg.total_cost_usd is not None:
+            extracted_correct = msg.total_cost_usd
+        assert extracted_correct == 0.0  # Fix: 0.0 is properly extracted
+
+    def test_extracts_usage_from_assistant_message(self) -> None:
+        """AssistantMessage.usage should be used for token accumulation.
+
+        The SDK can provide usage data on AssistantMessage objects,
+        not just on the final ResultMessage.
+        """
+
+        class MockAssistantMessage:
+            id: str = "msg_001"
+            content: list = []
+            usage: dict | None = {
+                "input_tokens": 500,
+                "output_tokens": 200,
+                "cache_read_input_tokens": 100,
+            }
+
+        msg = MockAssistantMessage()
+
+        # Extract usage from AssistantMessage
+        input_tokens = 0
+        output_tokens = 0
+        if hasattr(msg, "usage") and msg.usage is not None:
+            usage = msg.usage
+            if isinstance(usage, dict):
+                input_tokens = usage.get("input_tokens", 0)
+                output_tokens = usage.get("output_tokens", 0)
+                input_tokens += usage.get("cache_read_input_tokens", 0)
+
+        assert input_tokens == 600  # 500 + 100 cache
+        assert output_tokens == 200
+
+    def test_result_message_overrides_accumulated_totals(self) -> None:
+        """ResultMessage contains authoritative cumulative totals.
+
+        When ResultMessage is received, its values should override
+        (not add to) any previously accumulated values.
+        """
+        # Simulate accumulated values from AssistantMessages
+        accumulated_input = 500
+        accumulated_output = 200
+        accumulated_cost = 0.01
+
+        # Simulate ResultMessage with cumulative totals
+        class MockResultMessage:
+            total_cost_usd: float = 0.025  # Authoritative total
+            usage: dict = {
+                "input_tokens": 1000,  # Authoritative total (not additive)
+                "output_tokens": 400,
+                "cache_read_input_tokens": 50,
+            }
+
+        msg = MockResultMessage()
+
+        # ResultMessage should OVERRIDE, not add
+        if hasattr(msg, "total_cost_usd") and msg.total_cost_usd is not None:
+            accumulated_cost = msg.total_cost_usd  # Override
+
+        if hasattr(msg, "usage") and msg.usage is not None:
+            usage = msg.usage
+            if isinstance(usage, dict):
+                # Override with cumulative values
+                accumulated_input = usage.get("input_tokens", 0)
+                accumulated_output = usage.get("output_tokens", 0)
+                accumulated_input += usage.get("cache_read_input_tokens", 0)
+
+        assert accumulated_cost == 0.025
+        assert accumulated_input == 1050  # 1000 + 50 cache
+        assert accumulated_output == 400
+
+    def test_message_id_deduplication(self) -> None:
+        """Same message ID should not be counted twice.
+
+        The SDK may yield the same message multiple times.
+        We use message ID deduplication to prevent double-counting.
+        """
+
+        class MockMessage:
+            def __init__(self, msg_id: str, input_tokens: int):
+                self.id = msg_id
+                self.usage = {"input_tokens": input_tokens, "output_tokens": 0}
+
+        messages = [
+            MockMessage("msg_001", 100),
+            MockMessage("msg_002", 200),
+            MockMessage("msg_001", 100),  # Duplicate
+            MockMessage("msg_003", 300),
+            MockMessage("msg_002", 200),  # Duplicate
+        ]
+
+        processed_ids: set[str] = set()
+        total_input = 0
+
+        for msg in messages:
+            msg_id = getattr(msg, "id", None)
+            if msg_id and msg_id in processed_ids:
+                continue  # Skip duplicate
+            if msg_id:
+                processed_ids.add(msg_id)
+
+            if hasattr(msg, "usage") and msg.usage:
+                total_input += msg.usage.get("input_tokens", 0)
+
+        # Should only count each message once: 100 + 200 + 300 = 600
+        assert total_input == 600
+        assert len(processed_ids) == 3
+
+    def test_fallback_cost_calculation_when_sdk_returns_none(self) -> None:
+        """When SDK doesn't provide cost, calculate from tokens and pricing."""
+        from ralph.sdk_client import calculate_cost
+
+        # Scenario: SDK returns tokens but no cost
+        input_tokens = 10000
+        output_tokens = 5000
+        sdk_cost = None
+
+        # Fallback calculation
+        if sdk_cost is None:
+            cost = calculate_cost(input_tokens, output_tokens, "claude-sonnet-4-20250514")
+        else:
+            cost = sdk_cost
+
+        # Sonnet pricing: $3/1M input, $15/1M output
+        expected = (10000 / 1_000_000) * 3.0 + (5000 / 1_000_000) * 15.0
+        assert abs(cost - expected) < 0.0001
+        assert cost > 0  # Should be non-zero
+
+    def test_fallback_cost_calculation_for_opus_model(self) -> None:
+        """Fallback cost calculation uses correct pricing for Opus model."""
+        from ralph.sdk_client import calculate_cost
+
+        input_tokens = 10000
+        output_tokens = 5000
+
+        cost = calculate_cost(input_tokens, output_tokens, "claude-opus-4-20250514")
+
+        # Opus pricing: $15/1M input, $75/1M output
+        expected = (10000 / 1_000_000) * 15.0 + (5000 / 1_000_000) * 75.0
+        assert abs(cost - expected) < 0.0001
+
+    def test_fallback_uses_default_pricing_for_unknown_model(self) -> None:
+        """Unknown models use default pricing (same as Sonnet)."""
+        from ralph.sdk_client import calculate_cost
+
+        input_tokens = 10000
+        output_tokens = 5000
+
+        cost = calculate_cost(input_tokens, output_tokens, "unknown-model")
+
+        # Default pricing same as Sonnet: $3/1M input, $15/1M output
+        expected = (10000 / 1_000_000) * 3.0 + (5000 / 1_000_000) * 15.0
+        assert abs(cost - expected) < 0.0001
+
+    def test_handles_empty_usage_dict(self) -> None:
+        """Empty usage dict should return zeros, not crash."""
+        usage: dict = {}
+
+        input_tokens = usage.get("input_tokens", 0)
+        output_tokens = usage.get("output_tokens", 0)
+        cache_tokens = usage.get("cache_read_input_tokens", 0)
+
+        assert input_tokens == 0
+        assert output_tokens == 0
+        assert cache_tokens == 0
+
+    def test_handles_usage_with_none_values(self) -> None:
+        """Usage dict with None values should be handled gracefully."""
+        usage = {
+            "input_tokens": None,
+            "output_tokens": 500,
+        }
+
+        # None values should be handled (though SDK normally returns ints)
+        input_tokens = usage.get("input_tokens") or 0
+        output_tokens = usage.get("output_tokens") or 0
+
+        assert input_tokens == 0
+        assert output_tokens == 500

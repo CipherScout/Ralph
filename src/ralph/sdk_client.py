@@ -525,22 +525,34 @@ class RalphSDKClient:
                                             "verification_notes"
                                         )
 
-                    # Process result messages for token counts and cost (SPEC-005)
+                    # Process result messages for token counts and cost (SPEC-005, SPEC-006)
                     # Note: SDK returns usage as a dict, not an object
+                    # ResultMessage contains authoritative cumulative totals
                     if isinstance(msg, ResultMessage):
-                        # Extract cost directly from SDK if available
-                        if hasattr(msg, "total_cost_usd") and msg.total_cost_usd:
+                        # Extract cost directly from SDK if available (SPEC-006: fix falsy check)
+                        # Use `is not None` instead of truthy check to handle 0.0 correctly
+                        if hasattr(msg, "total_cost_usd") and msg.total_cost_usd is not None:
                             metrics.cost_usd = msg.total_cost_usd
 
-                        # Extract tokens from usage dict
+                        # Extract tokens from usage dict (authoritative totals)
                         if hasattr(msg, "usage") and msg.usage is not None:
                             usage = msg.usage
-                            metrics.input_tokens += usage.get("input_tokens", 0)
-                            metrics.output_tokens += usage.get("output_tokens", 0)
-                            # Include cache read tokens in input count
-                            metrics.input_tokens += usage.get(
-                                "cache_read_input_tokens", 0
-                            )
+                            if isinstance(usage, dict):
+                                # ResultMessage has cumulative totals - override, don't add
+                                metrics.input_tokens = usage.get("input_tokens", 0)
+                                metrics.output_tokens = usage.get("output_tokens", 0)
+                                # Include cache read tokens in input count
+                                metrics.input_tokens += usage.get(
+                                    "cache_read_input_tokens", 0
+                                )
+                                logger.debug(
+                                    "ResultMessage usage: cost=%.6f, "
+                                    "input=%d, output=%d, cache_read=%d",
+                                    metrics.cost_usd,
+                                    usage.get("input_tokens", 0),
+                                    usage.get("output_tokens", 0),
+                                    usage.get("cache_read_input_tokens", 0),
+                                )
 
         except ConnectionError as e:
             error = f"Connection error: {e}"
@@ -726,20 +738,32 @@ class RalphSDKClient:
                                         success=True,
                                     )
 
-                    # Process result messages for token counts and cost (SPEC-005)
+                    # Process result messages for token counts and cost (SPEC-005, SPEC-006)
                     # Note: SDK returns usage as a dict, not an object
+                    # ResultMessage contains authoritative cumulative totals
                     if isinstance(msg, ResultMessage):
-                        # Extract cost directly from SDK if available
-                        if hasattr(msg, "total_cost_usd") and msg.total_cost_usd:
+                        # Extract cost directly from SDK if available (SPEC-006: fix falsy check)
+                        # Use `is not None` instead of truthy check to handle 0.0 correctly
+                        if hasattr(msg, "total_cost_usd") and msg.total_cost_usd is not None:
                             cost_usd = msg.total_cost_usd
 
-                        # Extract tokens from usage dict
+                        # Extract tokens from usage dict (authoritative totals)
                         if hasattr(msg, "usage") and msg.usage is not None:
                             usage = msg.usage
-                            input_tokens += usage.get("input_tokens", 0)
-                            output_tokens += usage.get("output_tokens", 0)
-                            # Include cache read tokens in input count
-                            input_tokens += usage.get("cache_read_input_tokens", 0)
+                            if isinstance(usage, dict):
+                                # ResultMessage has cumulative totals - override, don't add
+                                input_tokens = usage.get("input_tokens", 0)
+                                output_tokens = usage.get("output_tokens", 0)
+                                # Include cache read tokens in input count
+                                input_tokens += usage.get("cache_read_input_tokens", 0)
+                                logger.debug(
+                                    "ResultMessage usage: cost=%.6f, "
+                                    "input=%d, output=%d, cache_read=%d",
+                                    cost_usd,
+                                    usage.get("input_tokens", 0),
+                                    usage.get("output_tokens", 0),
+                                    usage.get("cache_read_input_tokens", 0),
+                                )
 
         except ConnectionError as e:
             yield error_event(f"Connection error: {e}", error_type="connection")
