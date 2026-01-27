@@ -379,15 +379,26 @@ class RalphState:
 
         Args:
             cost_usd: Cost of this iteration in USD
-            tokens_used: Number of tokens used in this iteration
+            tokens_used: Cumulative tokens for the session from SDK's ResultMessage.usage.
+                NOTE: This is cumulative for the resumed conversation, not per-iteration delta.
             task_completed: Whether a task was completed in this iteration
             progress_made: Whether meaningful progress was made (e.g., tasks created in planning)
         """
+        # Cost tracking - SDK returns per-iteration cost, so we accumulate
         self.total_cost_usd += cost_usd
-        self.total_tokens_used += tokens_used
         self.session_cost_usd += cost_usd
-        self.session_tokens_used += tokens_used
+
+        # Token tracking - SDK returns CUMULATIVE tokens for resumed conversations
+        # We use SET semantics for session tokens, and compute delta for total
+        previous_session_tokens = self.session_tokens_used
+        self.session_tokens_used = tokens_used  # SET to cumulative from SDK
+        token_delta = tokens_used - previous_session_tokens
+        self.total_tokens_used += token_delta  # ADD the delta to running total
+
         self.last_activity_at = datetime.now()
+
+        # Update context budget with cumulative token usage from SDK
+        # This enables handoff detection when usage hits threshold
         self.context_budget.set_usage(tokens_used)
 
         if task_completed:

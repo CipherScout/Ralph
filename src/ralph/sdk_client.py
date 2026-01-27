@@ -593,11 +593,9 @@ class RalphSDKClient:
             )
 
         # Check if handoff is needed
-        needs_handoff = False
-        if self.state.context_budget.current_usage + total_tokens >= (
-            self.state.context_budget.smart_zone_max
-        ):
-            needs_handoff = True
+        # total_tokens is cumulative from SDK's ResultMessage.usage (for resumed conversations)
+        # Compare directly against threshold, don't add to current_usage
+        needs_handoff = total_tokens >= self.state.context_budget.smart_zone_max
 
         return IterationResult(
             success=error is None,
@@ -803,13 +801,10 @@ class RalphSDKClient:
         # ResultMessage.usage - this is the authoritative source of truth per Anthropic docs.
         # See: https://platform.claude.com/docs/en/agent-sdk/cost-tracking
 
-        # Check if handoff will be needed after this iteration's tokens are added to budget
-        # current_usage = cumulative from previous iterations
-        # total_tokens = this iteration's total from ResultMessage.usage (authoritative)
-        needs_handoff = (
-            self.state.context_budget.current_usage + total_tokens
-            >= self.state.context_budget.smart_zone_max
-        )
+        # Check if handoff is needed based on cumulative token usage
+        # total_tokens is cumulative from SDK's ResultMessage.usage (for resumed conversations)
+        # Compare directly against threshold, don't add to current_usage
+        needs_handoff = total_tokens >= self.state.context_budget.smart_zone_max
 
         # Yield iteration end event with summary
         yield iteration_end_event(

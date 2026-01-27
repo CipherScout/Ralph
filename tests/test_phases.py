@@ -135,11 +135,11 @@ class TestPhaseOrchestrator:
     def test_end_iteration_triggers_handoff(self, project_path: Path) -> None:
         """Detects when handoff is needed (at 80% per SPEC-005)."""
         orchestrator = PhaseOrchestrator(project_path)
-        orchestrator.state.context_budget.set_usage(165_000)  # > 80% (SPEC-005 threshold)
-
+        # tokens_used is cumulative from SDK's ResultMessage.usage
+        # Pass a value > 80% threshold (160K = 80% of 200K) to trigger handoff
         result = orchestrator.end_iteration(
             cost_usd=0.05,
-            tokens_used=5000,
+            tokens_used=165_000,  # > 80% threshold, triggers handoff
             task_completed=False,
         )
 
