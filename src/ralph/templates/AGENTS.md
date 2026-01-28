@@ -168,9 +168,9 @@ Markdown file containing session context for LLM to read.
 
 ```
 Hierarchy:
-- Per-iteration limit: $2 (prevents runaway single calls)
+- Per-iteration limit: $10 (prevents runaway single calls)
 - Per-session limit: $50 (prevents expensive sessions)
-- Total project limit: $200 (hard stop)
+- Total project limit: $100 (hard stop)
 ```
 
 ## Safety Constraints

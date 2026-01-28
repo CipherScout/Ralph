@@ -337,7 +337,7 @@ class TestDetermineRecoveryAction:
         config = load_config(project_path)
 
         # Cost is now tracked in RalphState, not CircuitBreaker
-        state.total_cost_usd = 200.0  # Exceeds default max
+        state.total_cost_usd = 200.0  # Exceeds default max ($100)
 
         action = determine_recovery_action(state, "expensive", config)
         assert action == RecoveryAction.MANUAL_INTERVENTION

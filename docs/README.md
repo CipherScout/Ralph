@@ -65,7 +65,7 @@ Discovery → Planning → Building → Validation
 ### Safety Controls
 
 - **Circuit Breaker**: Halts after 3 failures or 5 stagnation iterations
-- **Cost Limits**: Per-iteration ($2), per-session ($50), total ($200)
+- **Cost Limits**: Per-iteration ($10), per-session ($50), total ($100)
 - **Command Blocking**: Read-only git, uv-only package management
 
 ### Quick Commands

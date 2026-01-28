@@ -21,9 +21,9 @@ logger = logging.getLogger(__name__)
 class CostLimits:
     """Cost control limits."""
 
-    per_iteration: float = 2.0
+    per_iteration: float = 10.0
     per_session: float = 50.0
-    total: float = 200.0
+    total: float = 100.0
 
 
 @dataclass
@@ -176,9 +176,9 @@ def load_config(project_root: Path) -> RalphConfig:
                 if "cost_limits" in safety:
                     limits = safety["cost_limits"]
                     config.cost_limits = CostLimits(
-                        per_iteration=limits.get("per_iteration", 2.0),
+                        per_iteration=limits.get("per_iteration", 10.0),
                         per_session=limits.get("per_session", 50.0),
-                        total=limits.get("total", 200.0),
+                        total=limits.get("total", 100.0),
                     )
 
             # Parse phase configs

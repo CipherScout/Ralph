@@ -832,9 +832,9 @@ class MemoryManager:
 @dataclass
 class CostLimits:
     """Cost control limits."""
-    per_iteration: float = 2.0
+    per_iteration: float = 10.0
     per_session: float = 50.0
-    total: float = 200.0
+    total: float = 100.0
 
 @dataclass
 class PhaseConfig:

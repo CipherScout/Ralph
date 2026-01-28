@@ -992,9 +992,9 @@ Ralph tracks costs at multiple levels:
 ```python
 # Configuration (ralph.yml)
 cost_limits:
-  per_iteration: 2.0    # Max $2 per iteration
+  per_iteration: 10.0   # Max $10 per iteration
   per_session: 50.0     # Max $50 per session
-  total: 200.0          # Max $200 total
+  total: 100.0          # Max $100 total
 ```
 
 **Cost Tracking**:

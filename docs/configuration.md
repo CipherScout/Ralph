@@ -93,16 +93,16 @@ Controls spending limits at different granularities. Cost limits are nested unde
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `per_iteration` | float | `2.0` | Maximum cost per single iteration (USD) |
+| `per_iteration` | float | `10.0` | Maximum cost per single iteration (USD) |
 | `per_session` | float | `50.0` | Maximum cost per session (USD) |
-| `total` | float | `200.0` | Maximum total cost across all sessions (USD) |
+| `total` | float | `100.0` | Maximum total cost across all sessions (USD) |
 
 ```yaml
 safety:
   cost_limits:
-    per_iteration: 2.0
+    per_iteration: 10.0
     per_session: 50.0
-    total: 200.0
+    total: 100.0
 ```
 
 #### Context Section
@@ -310,9 +310,9 @@ safety:
   max_retries: 3
   # Cost controls
   cost_limits:
-    per_iteration: 2.0
+    per_iteration: 10.0
     per_session: 50.0
-    total: 200.0
+    total: 100.0
 ```
 
 ---
@@ -451,11 +451,11 @@ Ralph provides multi-level cost controls to prevent runaway spending.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      TOTAL LIMIT ($200)                      │
+│                      TOTAL LIMIT ($100)                      │
 │  ┌────────────────────────────────────────────────────────┐ │
 │  │               SESSION LIMIT ($50)                      │ │
 │  │  ┌──────────────────────────────────────────────────┐ │ │
-│  │  │           ITERATION LIMIT ($2)                   │ │ │
+│  │  │           ITERATION LIMIT ($10)                  │ │ │
 │  │  │  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐   │ │ │
 │  │  │  │ API    │ │ API    │ │ API    │ │ API    │   │ │ │
 │  │  │  │ Call 1 │ │ Call 2 │ │ Call 3 │ │ Call 4 │   │ │ │
@@ -473,9 +473,9 @@ Ralph provides multi-level cost controls to prevent runaway spending.
 
 | Scenario | per_iteration | per_session | total |
 |----------|--------------|-------------|-------|
-| Experimentation | $1.0 | $10.0 | $50.0 |
-| Development | $2.0 | $50.0 | $200.0 |
-| Production | $5.0 | $100.0 | $500.0 |
+| Experimentation | $5.0 | $25.0 | $50.0 |
+| Development | $10.0 | $50.0 | $100.0 |
+| Production | $20.0 | $100.0 | $500.0 |
 
 ### Monitoring Costs
 

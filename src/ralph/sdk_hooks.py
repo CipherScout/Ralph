@@ -183,7 +183,7 @@ def create_phase_validation_hook(state: RalphState) -> HookMatcher:
 
 
 def create_cost_limit_hook(
-    state: RalphState, max_cost_per_iteration: float = 2.0
+    state: RalphState, max_cost_per_iteration: float = 10.0
 ) -> HookMatcher:
     """Create hook to enforce cost limits.
 
@@ -217,7 +217,7 @@ def create_cost_limit_hook(
 
 def get_ralph_hooks(
     state: RalphState,
-    max_cost_per_iteration: float = 2.0,
+    max_cost_per_iteration: float = 10.0,
     include_phase_validation: bool = True,
     include_cost_limits: bool = True,
 ) -> dict[str, list[HookMatcher]]:

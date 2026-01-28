@@ -38,7 +38,7 @@ class TestRalphConfig:
         assert config.primary_model == "claude-sonnet-4-20250514"
         assert config.planning_model == "claude-opus-4-20250514"
         assert config.max_iterations == 100
-        assert config.cost_limits.total == 200.0
+        assert config.cost_limits.total == 100.0
 
     def test_nested_configs(self) -> None:
         """Nested configs are properly initialized."""
@@ -231,9 +231,9 @@ class TestCostLimits:
         """Default limits are set."""
         limits = CostLimits()
 
-        assert limits.per_iteration == 2.0
+        assert limits.per_iteration == 10.0
         assert limits.per_session == 50.0
-        assert limits.total == 200.0
+        assert limits.total == 100.0
 
 
 class TestCostController:

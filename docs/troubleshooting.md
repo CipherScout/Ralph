@@ -637,9 +637,9 @@ The total cost of API calls has exceeded the configured limit.
    ```yaml
    # ralph.yml (project root) or .ralph/config.yaml
    cost_limits:
-     per_iteration: 2.0
+     per_iteration: 10.0
      per_session: 50.0
-     total: 200.0
+     total: 100.0
    ```
 
 3. Reset state if you want to continue with a new budget:

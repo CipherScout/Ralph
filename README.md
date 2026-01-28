@@ -218,9 +218,9 @@ max_iterations: 100
 primary_model: "claude-sonnet-4-20250514"
 planning_model: "claude-opus-4-20250514"
 cost_limits:
-  per_iteration: 2.0
+  per_iteration: 10.0
   per_session: 50.0
-  total: 200.0
+  total: 100.0
 safety:
   max_retries: 3
   sandbox_enabled: true
