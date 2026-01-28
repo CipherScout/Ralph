@@ -132,19 +132,6 @@ class TestPhaseOrchestrator:
         assert result.success is True
         assert result.tasks_completed == 1
 
-    def test_end_iteration_never_triggers_handoff(self, project_path: Path) -> None:
-        """Handoff is no longer triggered (context budget tracking removed)."""
-        orchestrator = PhaseOrchestrator(project_path)
-        result = orchestrator.end_iteration(
-            cost_usd=0.05,
-            tokens_used=165_000,
-            task_completed=False,
-        )
-
-        # Handoff should never be triggered anymore
-        assert result.needs_handoff is False
-        assert result.handoff_reason is None
-
     def test_check_circuit_breaker_closed(self, project_path: Path) -> None:
         """Circuit breaker closed by default."""
         orchestrator = PhaseOrchestrator(project_path)

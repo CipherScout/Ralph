@@ -369,7 +369,6 @@ class RalphState:
 
     # Nested state
     circuit_breaker: CircuitBreakerState
-    context_budget: ContextBudget
 
     # Session tracking
     session_cost_usd: float       # Cost this session only
@@ -399,10 +398,6 @@ class RalphState:
     "state": "closed",
     "failure_count": 0,
     "stagnation_count": 0
-  },
-  "context_budget": {
-    "total_capacity": 200000,
-    "current_usage": 45000
   }
 }
 ```
@@ -616,8 +611,8 @@ This gives the fresh context window enough information to continue work effectiv
 Completed sessions are archived to `.ralph/session_history/sessions.jsonl`:
 
 ```json
-{"session_id": "a1b2c3d4", "iteration": 47, "tokens_used": 250000, "cost_usd": 2.50, "tasks_completed": 3, "phase": "building", "handoff_reason": "context_budget_threshold"}
-{"session_id": "e5f6g7h8", "iteration": 52, "tokens_used": 180000, "cost_usd": 1.80, "tasks_completed": 2, "phase": "building", "handoff_reason": "context_budget_threshold"}
+{"session_id": "a1b2c3d4", "iteration": 47, "tokens_used": 250000, "cost_usd": 2.50, "tasks_completed": 3, "phase": "building", "handoff_reason": "phase_complete"}
+{"session_id": "e5f6g7h8", "iteration": 52, "tokens_used": 180000, "cost_usd": 1.80, "tasks_completed": 2, "phase": "building", "handoff_reason": "manual_handoff"}
 ```
 
 This provides a full audit trail of all sessions.

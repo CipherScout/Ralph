@@ -107,22 +107,16 @@ safety:
 
 #### Context Section
 
-Manages context window utilization and memory limits.
+Manages memory limits.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `budget_percent` | integer | `60` | Percentage of context window to use (0-100) |
-| `handoff_threshold_percent` | integer | `75` | Context usage threshold triggering handoff |
-| `total_capacity` | integer | `200000` | Total context window capacity in tokens |
 | `max_progress_entries` | integer | `20` | Maximum progress log entries to retain |
 | `max_files_in_memory` | integer | `10` | Maximum files to keep in working memory |
 | `max_session_history` | integer | `50` | Maximum session history entries |
 
 ```yaml
 context:
-  budget_percent: 60
-  handoff_threshold_percent: 75
-  total_capacity: 200000
   max_progress_entries: 20
   max_files_in_memory: 10
   max_session_history: 50
@@ -285,14 +279,8 @@ phases:
     # Require human approval before marking complete
     require_human_approval: true
 
-# Context window management
+# Context management
 context:
-  # Percentage of context to use (leave room for responses)
-  budget_percent: 60
-  # Trigger handoff when context reaches this percentage
-  handoff_threshold_percent: 75
-  # Total context window capacity
-  total_capacity: 200000
   # Limits on in-memory items
   max_progress_entries: 20
   max_files_in_memory: 10
@@ -766,7 +754,6 @@ phases:
     require_human_approval: false
 
 context:
-  budget_percent: 70
   max_progress_entries: 10
 
 safety:
@@ -814,8 +801,6 @@ phases:
     require_human_approval: true
 
 context:
-  budget_percent: 50
-  handoff_threshold_percent: 70
   max_progress_entries: 30
   max_files_in_memory: 15
 
@@ -888,7 +873,6 @@ Ralph validates configuration on load. Common validation errors:
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| `Invalid budget_percent` | Value outside 0-100 | Use integer between 0 and 100 |
 | `Invalid cost limit` | Negative value | Use positive numbers |
 | `Unknown build tool` | Unsupported tool name | Use `uv`, `pip`, or `poetry` |
 | `YAML parse error` | Malformed YAML | Check indentation and syntax |

@@ -36,8 +36,6 @@ class PhaseResult:
     error: str | None = None
     should_transition: bool = False
     next_phase: Phase | None = None
-    needs_handoff: bool = False
-    handoff_reason: str | None = None
     messages: list[str] = field(default_factory=list)
 
 
@@ -109,13 +107,6 @@ class PhaseOrchestrator:
         """Check if circuit breaker should halt execution."""
         return self.state.should_halt()
 
-    def check_context_budget(self) -> tuple[bool, str | None]:
-        """Check if context handoff is needed.
-
-        Context budget tracking has been removed - always returns (False, None).
-        """
-        return False, None
-
     def should_pause(self) -> bool:
         """Check if loop should pause."""
         return self.state.paused
@@ -151,9 +142,6 @@ class PhaseOrchestrator:
         """End an iteration and determine next steps."""
         self.state.end_iteration(cost_usd, tokens_used, task_completed)
 
-        # Check for handoff need
-        needs_handoff, handoff_reason = self.check_context_budget()
-
         # Check circuit breaker
         should_halt, halt_reason = self.check_circuit_breaker()
 
@@ -164,8 +152,6 @@ class PhaseOrchestrator:
             success=not should_halt,
             phase=self.state.current_phase,
             tasks_completed=1 if task_completed else 0,
-            needs_handoff=needs_handoff,
-            handoff_reason=handoff_reason,
             should_transition=should_transition,
             next_phase=next_phase,
         )

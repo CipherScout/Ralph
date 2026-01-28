@@ -1201,7 +1201,7 @@ View, inspect, and manage Ralph's deterministic memory system. The memory system
 
 - **Phase transitions** - When moving between discovery/planning/building/validation
 - **Iteration boundaries** - At the end of each iteration within a phase
-- **Session handoffs** - When context budget is exceeded
+- **Session handoffs** - When a session ends
 
 This command allows you to view the active memory content, see statistics about memory files, and run cleanup operations.
 

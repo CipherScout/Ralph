@@ -111,7 +111,7 @@ class TestSessionMemory:
             session_id="sess-123",
             phase=Phase.BUILDING,
             iteration=10,
-            handoff_reason="context_budget_exceeded",
+            handoff_reason="phase_complete",
             task_in_progress="task-5",
             tokens_used=150000,
             cost_usd=2.50,
@@ -121,7 +121,7 @@ class TestSessionMemory:
         assert mem.session_id == "sess-123"
         assert mem.phase == Phase.BUILDING
         assert mem.iteration == 10
-        assert mem.handoff_reason == "context_budget_exceeded"
+        assert mem.handoff_reason == "phase_complete"
         assert mem.task_in_progress == "task-5"
         assert mem.tokens_used == 150000
         assert mem.cost_usd == 2.50
@@ -346,13 +346,13 @@ class TestCaptureSessionHandoffMemory:
         path = manager.capture_session_handoff_memory(
             state=state,
             plan=plan,
-            handoff_reason="context_budget_exceeded",
+            handoff_reason="phase_complete",
         )
 
         assert path.exists()
         assert "session" in path.name.lower()
         content = path.read_text()
-        assert "context_budget_exceeded" in content or "Context" in content
+        assert "phase_complete" in content or "Context" in content
         assert "task-5" in content
 
     def test_session_memory_sequential_numbering(self, tmp_path: Path) -> None:

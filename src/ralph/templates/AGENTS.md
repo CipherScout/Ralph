@@ -142,8 +142,7 @@ Ralph implements a circuit breaker to prevent runaway loops:
   "iteration_count": 42,
   "session_id": "abc123",
   "total_cost_usd": 15.50,
-  "circuit_breaker": {...},
-  "context_budget": {...}
+  "circuit_breaker": {...}
 }
 ```
 

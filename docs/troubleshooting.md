@@ -338,14 +338,7 @@ Too many API requests in a short period, exceeding your account's rate limits.
    uv run ralph-agent resume
    ```
 
-3. Reduce iteration frequency by adjusting config:
-   ```yaml
-   # .ralph/config.yaml
-   context:
-     budget_percent: 40  # Lower budget = fewer iterations per session
-   ```
-
-4. If persistent, contact Anthropic to increase rate limits
+3. If persistent, contact Anthropic to increase rate limits
 
 #### Prevention
 - Monitor costs and iteration counts regularly

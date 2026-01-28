@@ -289,10 +289,6 @@ class LoopRunner:
             if self.on_phase_change:
                 self.on_phase_change(old_phase, phase_result.next_phase)
 
-        # Handle handoff
-        if phase_result.needs_handoff:
-            self._handle_handoff(phase_result.handoff_reason or "context_budget")
-
         # Handle failure
         if not phase_result.success:
             self._handle_failure(phase_result.error or "unknown_error")

@@ -594,19 +594,6 @@ class ImplementationPlan:
     def completion_percentage(self) -> float: ...
 
 @dataclass
-class ContextBudget:
-    """Context window budget tracking."""
-    total_capacity: int = 200_000
-    system_prompt_allocation: int = 5_000
-    safety_margin: float = 0.20
-    current_usage: int = 0
-    tool_results_tokens: int = 0
-
-    @property
-    def available_tokens(self) -> int: ...
-    def add_usage(self, tokens: int) -> None: ...
-
-@dataclass
 class CircuitBreakerState:
     """Circuit breaker for failure detection."""
     max_consecutive_failures: int = 3
@@ -634,14 +621,12 @@ class RalphState:
     started_at: datetime = field(default_factory=datetime.now)
     last_activity_at: datetime = field(default_factory=datetime.now)
     circuit_breaker: CircuitBreakerState = field(default_factory=CircuitBreakerState)
-    context_budget: ContextBudget = field(default_factory=ContextBudget)
     session_cost_usd: float = 0.0
     session_tokens_used: int = 0
     tasks_completed_this_session: int = 0
     paused: bool = False
 
     def should_halt(self) -> tuple[bool, str | None]: ...
-    def needs_handoff(self) -> bool: ...
     def start_iteration(self) -> None: ...
     def end_iteration(self, cost_usd: float, tokens_used: int, task_completed: bool) -> None: ...
 ```
@@ -850,13 +835,6 @@ class CostLimits:
     per_iteration: float = 2.0
     per_session: float = 50.0
     total: float = 200.0
-
-@dataclass
-class ContextConfig:
-    """Context window management settings."""
-    budget_percent: int = 60
-    handoff_threshold_percent: int = 75
-    total_capacity: int = 200_000
 
 @dataclass
 class PhaseConfig:
@@ -1656,13 +1634,11 @@ def test_client_initialization(mock_mcp: MagicMock, mock_hooks: MagicMock) -> No
 def create_mock_state(
     phase: Phase = Phase.BUILDING,
     session_cost: float = 0.0,
-    context_usage: int = 0,
     project_root: Path | None = None,
 ) -> RalphState:
     state = RalphState(project_root=project_root or Path("/tmp/test"))
     state.current_phase = phase
     state.session_cost_usd = session_cost
-    state.context_budget.current_usage = context_usage
     return state
 ```
 
