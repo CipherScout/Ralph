@@ -141,6 +141,18 @@ class PhaseExecutor(ABC):
         """Save current plan."""
         save_plan(self.plan, self.project_root)
 
+    def _invalidate_state_cache(self) -> None:
+        """Invalidate cached state and client to force reload.
+
+        This ensures state and client remain in sync - when state is
+        reloaded from disk, a fresh client will be created with the
+        new state reference. This fixes the bug where setting only
+        self._state = None would leave the SDK client with a stale
+        state reference, causing iteration_count to not update properly.
+        """
+        self._state = None
+        self._client = None
+
     def _load_memory(self) -> str | None:
         """Load memory content for injection into prompts.
 
@@ -190,7 +202,7 @@ class PhaseExecutor(ABC):
         updates queued by the ralph_update_memory tool.
         """
         # Force reload state to get any pending updates
-        self._state = None
+        self._invalidate_state_cache()
         update = self.state.pending_memory_update
         if not update:
             return
@@ -604,7 +616,7 @@ Start by asking the user what they want to build."""
 
                 # Check for phase completion signal (from tool OR text)
                 # Reload state to check for completion signal
-                self._state = None  # Force reload
+                self._invalidate_state_cache()  # Force reload
                 if (
                     self.state.is_phase_complete("discovery")
                     or "discovery complete" in result.final_text.lower()
@@ -775,6 +787,8 @@ Start by asking the user what they want to build."""
                 user_response: str | None = None
                 event = await gen.asend(None)  # Start iteration generator
 
+                iteration_needs_handoff = False
+
                 while True:
                     try:
                         # Capture final text and metrics from iteration end events
@@ -782,6 +796,7 @@ Start by asking the user what they want to build."""
                             total_cost += event.data.get("cost_usd", 0.0)
                             total_tokens += event.data.get("tokens_used", 0)
                             last_final_text = event.data.get("final_text", "")
+                            iteration_needs_handoff = event.data.get("needs_handoff", False)
                             iterations_run += 1
 
                         # Yield event to caller and get potential user input
@@ -793,9 +808,17 @@ Start by asking the user what they want to build."""
                     except StopAsyncIteration:
                         break
 
+                # Check for handoff need (context budget exceeded)
+                if iteration_needs_handoff:
+                    self.client.reset_session()
+                    self.state.context_budget.reset()
+                    self.save_state()
+                    yield info_event("Context budget exceeded - session handoff triggered")
+                    break
+
                 # Check for phase completion signal (from tool OR text)
                 # Reload state to check for completion signal
-                self._state = None  # Force reload
+                self._invalidate_state_cache()  # Force reload
                 if (
                     self.state.is_phase_complete("discovery")
                     or "discovery complete" in last_final_text.lower()
@@ -987,7 +1010,7 @@ Start by reading the specs and analyzing the codebase."""
                     )
 
                 # Check for phase completion signal (from tool OR text)
-                self._state = None  # Force reload
+                self._invalidate_state_cache()  # Force reload
                 if (
                     self.state.is_phase_complete("planning")
                     or "planning complete" in result.final_text.lower()
@@ -1092,6 +1115,7 @@ Start by reading the specs and analyzing the codebase."""
 
                 user_response: str | None = None
                 event = await gen.asend(None)  # Start iteration generator
+                iteration_needs_handoff = False
 
                 while True:
                     try:
@@ -1100,6 +1124,7 @@ Start by reading the specs and analyzing the codebase."""
                             total_cost += event.data.get("cost_usd", 0.0)
                             total_tokens += event.data.get("tokens_used", 0)
                             last_final_text = event.data.get("final_text", "")
+                            iteration_needs_handoff = event.data.get("needs_handoff", False)
                             iterations_run += 1
 
                         # Yield event to caller and get potential user input
@@ -1111,8 +1136,16 @@ Start by reading the specs and analyzing the codebase."""
                     except StopAsyncIteration:
                         break
 
+                # Check for handoff need (context budget exceeded)
+                if iteration_needs_handoff:
+                    self.client.reset_session()
+                    self.state.context_budget.reset()
+                    self.save_state()
+                    yield info_event("Context budget exceeded - session handoff triggered")
+                    break
+
                 # Check for phase completion signal (from tool OR text)
-                self._state = None  # Force reload
+                self._invalidate_state_cache()  # Force reload
                 if (
                     self.state.is_phase_complete("planning")
                     or "planning complete" in last_final_text.lower()
@@ -1414,6 +1447,7 @@ Start implementing now."""
                 iteration_success = True
                 iteration_task_completed = False
                 iteration_error: str | None = None
+                iteration_needs_handoff = False
 
                 while True:
                     try:
@@ -1424,6 +1458,7 @@ Start implementing now."""
                             iteration_success = event.data.get("success", True)
                             iteration_task_completed = event.data.get("task_completed", False)
                             iteration_error = event.data.get("error")
+                            iteration_needs_handoff = event.data.get("needs_handoff", False)
                             iterations_run += 1
 
                         # Yield event to caller and get potential user input
@@ -1434,6 +1469,14 @@ Start implementing now."""
 
                     except StopAsyncIteration:
                         break
+
+                # Check for handoff need (context budget exceeded)
+                # For building phase, reset session but continue to next task
+                if iteration_needs_handoff:
+                    self.client.reset_session()
+                    self.state.context_budget.reset()
+                    self.save_state()
+                    yield info_event("Context budget exceeded - session reset, continuing")
 
                 if iteration_task_completed:
                     tasks_completed += 1
@@ -1681,7 +1724,7 @@ If everything passes, confirm validation is complete."""
                     )
 
                 # Check for completion signal
-                self._state = None  # Force reload
+                self._invalidate_state_cache()  # Force reload
                 if (
                     self.state.is_phase_complete("validation")
                     or "validation complete" in result.final_text.lower()
@@ -1801,6 +1844,7 @@ If everything passes, confirm validation is complete."""
                 event = await gen.asend(None)  # Start iteration generator
                 iteration_success = True
                 iteration_error: str | None = None
+                iteration_needs_handoff = False
 
                 while True:
                     try:
@@ -1811,6 +1855,7 @@ If everything passes, confirm validation is complete."""
                             last_final_text = event.data.get("final_text", "")
                             iteration_success = event.data.get("success", True)
                             iteration_error = event.data.get("error")
+                            iteration_needs_handoff = event.data.get("needs_handoff", False)
                             iterations_run += 1
 
                         # Yield event to caller and get potential user input
@@ -1821,6 +1866,14 @@ If everything passes, confirm validation is complete."""
 
                     except StopAsyncIteration:
                         break
+
+                # Check for handoff need (context budget exceeded)
+                if iteration_needs_handoff:
+                    self.client.reset_session()
+                    self.state.context_budget.reset()
+                    self.save_state()
+                    yield info_event("Context budget exceeded - session handoff triggered")
+                    break
 
                 # Record success/failure for circuit breaker
                 if not iteration_success:
@@ -1847,7 +1900,7 @@ If everything passes, confirm validation is complete."""
                     return
 
                 # Check for completion signal
-                self._state = None  # Force reload
+                self._invalidate_state_cache()  # Force reload
                 if (
                     self.state.is_phase_complete("validation")
                     or "validation complete" in last_final_text.lower()
