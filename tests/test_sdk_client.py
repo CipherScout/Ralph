@@ -7,7 +7,7 @@ import pytest
 from claude_agent_sdk import HookMatcher
 
 from ralph.config import CostLimits, RalphConfig
-from ralph.models import ContextBudget, Phase, RalphState
+from ralph.models import Phase, RalphState
 from ralph.sdk_client import (
     MODEL_PRICING,
     PHASE_TOOLS,
@@ -26,18 +26,12 @@ from ralph.sdk_client import (
 def create_mock_state(
     phase: Phase = Phase.BUILDING,
     session_cost: float = 0.0,
-    context_usage: int = 0,
-    context_capacity: int = 200_000,
     project_root: Path | None = None,
 ) -> RalphState:
     """Create a mock RalphState for testing."""
     state = RalphState(project_root=project_root or Path("/tmp/test"))
     state.current_phase = phase
     state.session_cost_usd = session_cost
-    state.context_budget = ContextBudget(
-        total_capacity=context_capacity,
-        current_usage=context_usage,
-    )
     return state
 
 
@@ -117,7 +111,6 @@ class TestIterationResult:
         assert result.task_id is None
         assert result.tokens_used == 0
         assert result.cost_usd == 0.0
-        assert result.needs_handoff is False
         assert result.error is None
         assert result.completion_notes is None
         assert isinstance(result.metrics, IterationMetrics)
@@ -144,12 +137,6 @@ class TestIterationResult:
         assert result.task_completed is True
         assert result.task_id == "task-001"
         assert result.completion_notes == "All tests passed"
-
-    def test_needs_handoff(self) -> None:
-        """Result indicating handoff is needed."""
-        result = IterationResult(success=True, needs_handoff=True)
-        assert result.needs_handoff is True
-
 
 class TestModelPricing:
     """Tests for model pricing constants."""
@@ -1279,86 +1266,3 @@ class TestCostTracking:
         assert output_tokens == 500
 
 
-class TestContextBudgetNotDoubleCountedInStreamIteration:
-    """Tests to ensure context budget is only updated by end_iteration(), not stream_iteration().
-
-    Per Anthropic SDK docs, ResultMessage contains cumulative usage. The SDK client
-    should NOT modify context budget directly - that's the responsibility of end_iteration()
-    which is called by the orchestration layer (executors/iteration.py).
-
-    The context budget uses SET semantics (not ADD) because SDK returns cumulative totals.
-    This prevents double-counting tokens which can lead to false context budget exhaustion
-    (e.g., showing 1118% utilization instead of ~116%).
-    """
-
-    def test_sdk_client_does_not_modify_context_budget_on_init(self) -> None:
-        """Creating a RalphSDKClient should not modify the context budget."""
-        state = create_mock_state(context_usage=10_000)
-        initial_usage = state.context_budget.current_usage
-
-        _ = RalphSDKClient(state=state, auto_configure=False)
-
-        # Context budget should be unchanged
-        assert state.context_budget.current_usage == initial_usage
-
-    def test_context_budget_starts_at_expected_value(self) -> None:
-        """Verify our mock state sets up context budget correctly."""
-        state = create_mock_state(context_usage=50_000, context_capacity=200_000)
-
-        assert state.context_budget.current_usage == 50_000
-        assert state.context_budget.total_capacity == 200_000
-        assert state.context_budget.usage_percentage == 25.0
-
-    def test_end_iteration_is_single_source_of_truth_for_context_budget(self) -> None:
-        """Verify that end_iteration() updates the context budget.
-
-        This is the ONLY place that should update context_budget to avoid double-counting.
-        """
-        state = create_mock_state(context_usage=0)
-
-        # Simulate end_iteration updating the budget
-        tokens_used = 50_000
-        state.end_iteration(
-            cost_usd=0.5,
-            tokens_used=tokens_used,
-            task_completed=False,
-        )
-
-        # Context budget should reflect the tokens used
-        assert state.context_budget.current_usage == tokens_used
-
-    def test_set_usage_replaces_value_not_accumulates(self) -> None:
-        """Verify set_usage SETS the cumulative value from SDK, not accumulates.
-
-        The SDK returns cumulative totals. Calling set_usage multiple times
-        should SET to that value, not accumulate.
-        """
-        state = create_mock_state(context_usage=0)
-        tokens_used = 100_000
-
-        # Calling set_usage multiple times with SDK cumulative value
-        # should just SET to that value, not accumulate
-        state.context_budget.set_usage(tokens_used)
-        state.context_budget.set_usage(tokens_used)
-
-        # Result: Value is SET, not accumulated
-        assert state.context_budget.current_usage == 100_000  # Correct!
-        assert state.context_budget.usage_percentage == 50.0  # Correct!
-
-    def test_end_iteration_uses_set_semantics(self) -> None:
-        """Verify end_iteration sets context budget from SDK cumulative total.
-
-        The SDK's ResultMessage.usage contains cumulative totals. end_iteration
-        should SET (not add) this value to avoid double-counting across iterations.
-        """
-        state = create_mock_state(context_usage=0)
-
-        # Iteration 1: SDK reports 50k cumulative
-        state.end_iteration(cost_usd=0.5, tokens_used=50_000, task_completed=False)
-        assert state.context_budget.current_usage == 50_000
-        assert state.context_budget.usage_percentage == 25.0
-
-        # Iteration 2: SDK reports 100k cumulative (not 50k delta!)
-        state.end_iteration(cost_usd=0.5, tokens_used=100_000, task_completed=False)
-        assert state.context_budget.current_usage == 100_000  # SET to 100k, not 150k
-        assert state.context_budget.usage_percentage == 50.0  # Correct!

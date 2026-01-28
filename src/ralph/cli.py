@@ -599,24 +599,6 @@ def status(
 
     console.print(Panel(cb_text, title="Circuit Breaker", border_style=cb_color))
 
-    # Context budget
-    budget = state.context_budget
-    if budget.total_capacity > 0:
-        usage_pct = (budget.current_usage / budget.total_capacity) * 100
-    else:
-        usage_pct = 0.0
-    budget_color = "green" if usage_pct < 60 else "yellow" if usage_pct < 80 else "red"
-
-    budget_text = (
-        f"[bold]Usage:[/bold] [{budget_color}]{usage_pct:.1f}%[/{budget_color}] "
-        f"({budget.current_usage:,}/{budget.total_capacity:,})\n"
-        f"[bold]Smart Zone Max:[/bold] {budget.smart_zone_max:,} (60%)\n"
-        f"[bold]Available:[/bold] {budget.available_tokens:,}\n"
-        f"[bold]Should Handoff:[/bold] {'Yes' if budget.should_handoff() else 'No'}"
-    )
-
-    console.print(Panel(budget_text, title="Context Budget", border_style=budget_color))
-
     # Load and show plan if verbose
     if verbose and plan_exists(path):
         try:

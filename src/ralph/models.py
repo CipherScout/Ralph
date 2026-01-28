@@ -232,88 +232,6 @@ class CircuitBreakerState:
 
 
 @dataclass
-class ContextBudget:
-    """Token budget tracking for context window management.
-
-    Targets 80-85% utilization before triggering handoff (SPEC-005).
-    Provides warnings at 70% and emergency exit at 90%.
-    """
-
-    total_capacity: int = 200_000
-    system_prompt_allocation: int = 5_000
-    safety_margin: float = 0.15  # Keep 15% buffer (was 20%)
-
-    # Configurable thresholds (SPEC-005)
-    handoff_threshold: float = 0.80  # Trigger handoff at 80% (was 60%)
-    warning_threshold: float = 0.70  # Warning at 70%
-    emergency_threshold: float = 0.90  # Emergency exit at 90%
-
-    current_usage: int = 0
-    tool_results_tokens: int = 0
-
-    @property
-    def effective_capacity(self) -> int:
-        """Capacity minus safety margin (85% with 15% margin)."""
-        return int(self.total_capacity * (1 - self.safety_margin))
-
-    @property
-    def smart_zone_max(self) -> int:
-        """Handoff threshold (80% by default, per SPEC-005)."""
-        return int(self.total_capacity * self.handoff_threshold)
-
-    @property
-    def warning_zone(self) -> int:
-        """Warning threshold (70%)."""
-        return int(self.total_capacity * self.warning_threshold)
-
-    @property
-    def emergency_zone(self) -> int:
-        """Emergency exit threshold (90%)."""
-        return int(self.total_capacity * self.emergency_threshold)
-
-    @property
-    def available_tokens(self) -> int:
-        """Remaining tokens before effective capacity."""
-        return max(0, self.effective_capacity - self.current_usage)
-
-    @property
-    def usage_percentage(self) -> float:
-        """Current usage as a percentage of total capacity."""
-        if self.total_capacity <= 0:
-            return 0.0
-        return (self.current_usage / self.total_capacity) * 100
-
-    def should_handoff(self) -> bool:
-        """Check if context hand-off is needed (at 80% per SPEC-005)."""
-        return self.current_usage >= self.smart_zone_max
-
-    def should_warn(self) -> bool:
-        """Check if warning should be shown (at 70%, below handoff)."""
-        return (
-            self.current_usage >= self.warning_zone
-            and self.current_usage < self.smart_zone_max
-        )
-
-    def should_emergency_exit(self) -> bool:
-        """Check if emergency exit is needed (at 90%)."""
-        return self.current_usage >= self.emergency_zone
-
-    def set_usage(self, tokens: int) -> None:
-        """Set token usage to cumulative total from SDK.
-
-        The SDK's ResultMessage.usage contains cumulative totals for the
-        conversation, not per-iteration deltas. We SET (not add) to avoid
-        double-counting.
-        """
-        self.current_usage = tokens
-
-    def reset(self) -> None:
-        """Reset for new session."""
-        self.current_usage = 0
-        self.tool_results_tokens = 0
-
-
-@dataclass
 class RalphState:
     """Master state persisted to .ralph/state.json.
 
@@ -337,7 +255,6 @@ class RalphState:
 
     # Nested state objects
     circuit_breaker: CircuitBreakerState = field(default_factory=CircuitBreakerState)
-    context_budget: ContextBudget = field(default_factory=ContextBudget)
 
     # Session tracking
     session_cost_usd: float = 0.0
@@ -397,10 +314,6 @@ class RalphState:
 
         self.last_activity_at = datetime.now()
 
-        # Update context budget with cumulative token usage from SDK
-        # This enables handoff detection when usage hits threshold
-        self.context_budget.set_usage(tokens_used)
-
         if task_completed:
             self.tasks_completed_this_session += 1
             self.circuit_breaker.record_success(tasks_completed=1, progress_made=True)
@@ -414,18 +327,11 @@ class RalphState:
         self.session_tokens_used = 0
         self.tasks_completed_this_session = 0
         self.session_iteration_count = 0  # Reset session iteration counter
-        self.context_budget.reset()
 
     def advance_phase(self, new_phase: Phase) -> None:
         """Transition to a new phase."""
         self.current_phase = new_phase
         self.last_activity_at = datetime.now()
-        # Phase transitions always start fresh sessions
-        self.context_budget.reset()
-
-    def needs_handoff(self) -> bool:
-        """Check if context hand-off is needed."""
-        return self.context_budget.should_handoff()
 
     def should_halt(self) -> tuple[bool, str | None]:
         """Check if execution should halt via circuit breaker."""

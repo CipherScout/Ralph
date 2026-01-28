@@ -42,7 +42,6 @@ def mock_iteration_result() -> IterationResult:
         cost_usd=0.05,
         tokens_used=5000,
         final_text="Iteration completed",
-        needs_handoff=False,
         metrics=IterationMetrics(),
     )
 
@@ -213,7 +212,6 @@ class TestExecuteAsync:
                 cost_usd=0.05,
                 tokens_used=5000,
                 final_text="Done",
-                needs_handoff=False,
                 metrics=IterationMetrics(),
             )
         )
@@ -275,7 +273,6 @@ class TestExecuteSingleIteration:
                 cost_usd=0.05,
                 tokens_used=5000,
                 final_text="Done",
-                needs_handoff=False,
                 metrics=IterationMetrics(),
             )
         )
@@ -301,7 +298,6 @@ class TestExecuteSingleIteration:
                 cost_usd=0.10,
                 tokens_used=10000,
                 final_text="Task done",
-                needs_handoff=False,
                 metrics=IterationMetrics(),
             )
         )
@@ -330,7 +326,6 @@ class TestExecuteSingleIteration:
                 cost_usd=0.05,
                 tokens_used=5000,
                 final_text="Done",
-                needs_handoff=False,
                 metrics=IterationMetrics(),
             )
         )
@@ -356,7 +351,6 @@ class TestExecuteSingleIteration:
                 cost_usd=0.05,
                 tokens_used=5000,
                 final_text="Working",
-                needs_handoff=False,
                 metrics=IterationMetrics(),
             )
         )
@@ -394,7 +388,6 @@ class TestRunIterationSync:
                 cost_usd=0.05,
                 tokens_used=5000,
                 final_text="Done",
-                needs_handoff=False,
                 metrics=IterationMetrics(),
             )
         )
@@ -439,7 +432,6 @@ class TestExecuteUntilComplete:
                 cost_usd=0.05,
                 tokens_used=5000,
                 final_text="Done",
-                needs_handoff=False,
                 metrics=IterationMetrics(),
             )
 
@@ -472,7 +464,6 @@ class TestExecuteUntilComplete:
                 cost_usd=0.05,
                 tokens_used=5000,
                 final_text="Working",
-                needs_handoff=False,
                 metrics=IterationMetrics(),
             )
         )
@@ -503,7 +494,6 @@ class TestExecuteUntilComplete:
                 cost_usd=0.05,
                 tokens_used=5000,
                 final_text="Done",
-                needs_handoff=False,
                 metrics=IterationMetrics(),
             )
         )
@@ -543,7 +533,6 @@ class TestExecuteUntilComplete:
                 cost_usd=0.05,
                 tokens_used=5000,
                 final_text="Error",
-                needs_handoff=False,
                 metrics=IterationMetrics(),
             )
         )

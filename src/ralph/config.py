@@ -27,20 +27,6 @@ class CostLimits:
 
 
 @dataclass
-class ContextConfig:
-    """Context window management settings."""
-
-    budget_percent: int = 60
-    handoff_threshold_percent: int = 75
-    total_capacity: int = 200_000
-
-    # Context loading limits
-    max_progress_entries: int = 20
-    max_files_in_memory: int = 10
-    max_session_history: int = 50
-
-
-@dataclass
 class PhaseConfig:
     """Configuration for a specific phase."""
 
@@ -94,7 +80,6 @@ class RalphConfig:
 
     project: ProjectConfig = field(default_factory=ProjectConfig)
     build: BuildConfig = field(default_factory=BuildConfig)
-    context: ContextConfig = field(default_factory=ContextConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
     cost_limits: CostLimits = field(default_factory=CostLimits)
 
@@ -179,18 +164,6 @@ def load_config(project_root: Path) -> RalphConfig:
                     format_command=build.get("format_command", "uv run ruff format ."),
                 )
 
-            # Parse context config
-            if "context" in data:
-                ctx = data["context"]
-                config.context = ContextConfig(
-                    budget_percent=ctx.get("budget_percent", 60),
-                    handoff_threshold_percent=ctx.get("handoff_threshold_percent", 75),
-                    total_capacity=ctx.get("total_capacity", 200_000),
-                    max_progress_entries=ctx.get("max_progress_entries", 20),
-                    max_files_in_memory=ctx.get("max_files_in_memory", 10),
-                    max_session_history=ctx.get("max_session_history", 50),
-                )
-
             # Parse safety config
             if "safety" in data:
                 safety = data["safety"]
@@ -249,8 +222,6 @@ def _apply_env_overrides(config: RalphConfig) -> RalphConfig:
         config.max_iterations = int(env_val)
     if env_val := os.environ.get("RALPH_MAX_COST_USD"):
         config.cost_limits.total = float(env_val)
-    if env_val := os.environ.get("RALPH_CONTEXT_BUDGET_PERCENT"):
-        config.context.budget_percent = int(env_val)
     if env_val := os.environ.get("RALPH_CIRCUIT_BREAKER_FAILURES"):
         config.circuit_breaker_failures = int(env_val)
     if env_val := os.environ.get("RALPH_CIRCUIT_BREAKER_STAGNATION"):
@@ -300,13 +271,6 @@ def save_config(config: RalphConfig, project_root: Path) -> Path:
             "validation": {
                 "require_human_approval": config.validation.require_human_approval,
             },
-        },
-        "context": {
-            "budget_percent": config.context.budget_percent,
-            "handoff_threshold_percent": config.context.handoff_threshold_percent,
-            "max_progress_entries": config.context.max_progress_entries,
-            "max_files_in_memory": config.context.max_files_in_memory,
-            "max_session_history": config.context.max_session_history,
         },
         "safety": {
             "sandbox_enabled": config.safety.sandbox_enabled,

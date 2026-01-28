@@ -238,7 +238,6 @@ class IterationResult:
     task_id: str | None = None
     tokens_used: int = 0
     cost_usd: float = 0.0
-    needs_handoff: bool = False
     error: str | None = None
     completion_notes: str | None = None
     metrics: IterationMetrics = field(default_factory=IterationMetrics)
@@ -592,18 +591,12 @@ class RalphSDKClient:
                 get_model_for_phase(phase or self.state.current_phase, self.config),
             )
 
-        # Check if handoff is needed
-        # total_tokens is cumulative from SDK's ResultMessage.usage (for resumed conversations)
-        # Compare directly against threshold, don't add to current_usage
-        needs_handoff = total_tokens >= self.state.context_budget.smart_zone_max
-
         return IterationResult(
             success=error is None,
             task_completed=task_completed,
             task_id=task_id,
             tokens_used=total_tokens,
             cost_usd=metrics.cost_usd,
-            needs_handoff=needs_handoff,
             error=error,
             completion_notes=completion_notes,
             metrics=metrics,
@@ -666,7 +659,6 @@ class RalphSDKClient:
             iteration=self.state.iteration_count,
             phase=current_phase.value,
             session_id=self._session_id,
-            usage_percentage=self.state.context_budget.usage_percentage,
         )
 
         try:
@@ -796,16 +788,6 @@ class RalphSDKClient:
                 get_model_for_phase(current_phase, self.config),
             )
 
-        # NOTE: Context budget is updated by end_iteration() which is called by the orchestrator
-        # after this method returns. The SDK client only extracts and returns metrics from
-        # ResultMessage.usage - this is the authoritative source of truth per Anthropic docs.
-        # See: https://platform.claude.com/docs/en/agent-sdk/cost-tracking
-
-        # Check if handoff is needed based on cumulative token usage
-        # total_tokens is cumulative from SDK's ResultMessage.usage (for resumed conversations)
-        # Compare directly against threshold, don't add to current_usage
-        needs_handoff = total_tokens >= self.state.context_budget.smart_zone_max
-
         # Yield iteration end event with summary
         yield iteration_end_event(
             iteration=self.state.iteration_count,
@@ -817,7 +799,6 @@ class RalphSDKClient:
             tool_calls=tool_calls,
             task_completed=task_completed,
             task_id=task_id,
-            needs_handoff=needs_handoff,
             final_text="\n".join(final_text_parts),
         )
 

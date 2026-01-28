@@ -38,7 +38,6 @@ def mock_iteration_result() -> IterationResult:
         cost_usd=0.05,
         tokens_used=5000,
         final_text="Completed iteration",
-        needs_handoff=False,
         metrics=IterationMetrics(),
     )
 
@@ -123,7 +122,6 @@ class TestDiscoveryExecutor:
                 cost_usd=0.05,
                 tokens_used=5000,
                 final_text="Discovery complete",
-                needs_handoff=False,
                 metrics=IterationMetrics(),
             )
         )
@@ -153,7 +151,6 @@ class TestDiscoveryExecutor:
                 cost_usd=0.01,
                 tokens_used=1000,
                 final_text="",
-                needs_handoff=False,
                 metrics=IterationMetrics(),
             )
         )
@@ -254,7 +251,6 @@ class TestDiscoveryDocumentValidation:
                 cost_usd=0.05,
                 tokens_used=5000,
                 final_text="Discovery complete",
-                needs_handoff=False,
                 metrics=IterationMetrics(),
             )
         )
@@ -291,7 +287,6 @@ class TestDiscoveryDocumentValidation:
                 cost_usd=0.05,
                 tokens_used=5000,
                 final_text="Discovery complete",
-                needs_handoff=False,
                 metrics=IterationMetrics(),
             )
         )
@@ -336,7 +331,6 @@ class TestPlanningExecutor:
                 cost_usd=0.10,
                 tokens_used=10000,
                 final_text="Planning complete",
-                needs_handoff=False,
                 metrics=IterationMetrics(),
             )
         )
@@ -403,7 +397,6 @@ class TestBuildingExecutor:
                 cost_usd=0.15,
                 tokens_used=15000,
                 final_text="Task completed",
-                needs_handoff=False,
                 metrics=IterationMetrics(),
             )
         )
@@ -440,7 +433,6 @@ class TestBuildingExecutor:
                 cost_usd=0.10,
                 tokens_used=10000,
                 final_text="Task done",
-                needs_handoff=False,
                 metrics=IterationMetrics(),
             )
         )
@@ -518,7 +510,6 @@ class TestValidationExecutor:
                 cost_usd=0.08,
                 tokens_used=8000,
                 final_text="Validation complete - all tests pass",
-                needs_handoff=False,
                 metrics=IterationMetrics(),
             )
         )
@@ -540,14 +531,13 @@ class TestValidationExecutor:
         mock_client = MagicMock()
         mock_client.run_iteration = AsyncMock(
             return_value=IterationResult(
-                success=True,
+                success=False,  # Validation failed
                 task_completed=False,
                 task_id=None,
-                error=None,
+                error="Validation failed",
                 cost_usd=0.08,
                 tokens_used=8000,
                 final_text="Tests failing",
-                needs_handoff=True,  # Forces exit before completion
                 metrics=IterationMetrics(),
             )
         )
@@ -574,7 +564,6 @@ class TestValidationExecutor:
                 cost_usd=0.01,
                 tokens_used=100,
                 final_text="Tests failed",
-                needs_handoff=False,
                 metrics=IterationMetrics(),
             )
         )
@@ -606,7 +595,6 @@ class TestValidationExecutor:
                 cost_usd=0.01,
                 tokens_used=100,
                 final_text="Checking tests...",  # Same text, no progress keywords
-                needs_handoff=False,
                 metrics=IterationMetrics(),
             )
         )
@@ -642,7 +630,6 @@ class TestValidationExecutor:
                 cost_usd=0.01,
                 tokens_used=100,
                 final_text=f"Running pytest iteration {call_count}... tests failing",
-                needs_handoff=False,
                 metrics=IterationMetrics(),
             )
 
@@ -670,7 +657,6 @@ class TestValidationExecutor:
                 cost_usd=10.0,  # High cost per iteration
                 tokens_used=1000,
                 final_text="Running pytest checks...",
-                needs_handoff=False,
                 metrics=IterationMetrics(),
             )
         )

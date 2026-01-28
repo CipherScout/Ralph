@@ -1037,36 +1037,6 @@ class TestEdgeCasesAndErrorConditions:
         assert result.error is not None  # Error message present
 
     @pytest.mark.asyncio
-    async def test_executor_context_budget_overflow(self, project_root):
-        """Test executor behavior when context budget is exceeded."""
-        initialize_state(project_root)
-        initialize_plan(project_root)
-
-        executor = PlanningExecutor(project_root)
-
-        # Simulate context budget overflow
-        executor.state.context_budget.set_usage(150_000)  # Exceed limit
-
-        # Mock client to simulate handoff need
-        mock_client = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.success = True
-        mock_result.needs_handoff = True
-        mock_result.cost_usd = 0.05
-        mock_result.tokens_used = 1000
-        mock_result.task_completed = False
-        mock_result.final_text = ""
-        mock_result.error = None
-        mock_client.run_iteration.return_value = mock_result
-
-        executor._client = mock_client
-
-        result = await executor.execute(max_iterations=1)
-
-        # Should complete but indicate need for handoff
-        assert result.success is True
-
-    @pytest.mark.asyncio
     async def test_multiple_simultaneous_input_requests(self):
         """Test handling multiple simultaneous input requests."""
         # This tests the system's ability to handle concurrent input requests

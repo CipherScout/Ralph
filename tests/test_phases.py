@@ -132,19 +132,18 @@ class TestPhaseOrchestrator:
         assert result.success is True
         assert result.tasks_completed == 1
 
-    def test_end_iteration_triggers_handoff(self, project_path: Path) -> None:
-        """Detects when handoff is needed (at 80% per SPEC-005)."""
+    def test_end_iteration_never_triggers_handoff(self, project_path: Path) -> None:
+        """Handoff is no longer triggered (context budget tracking removed)."""
         orchestrator = PhaseOrchestrator(project_path)
-        # tokens_used is cumulative from SDK's ResultMessage.usage
-        # Pass a value > 80% threshold (160K = 80% of 200K) to trigger handoff
         result = orchestrator.end_iteration(
             cost_usd=0.05,
-            tokens_used=165_000,  # > 80% threshold, triggers handoff
+            tokens_used=165_000,
             task_completed=False,
         )
 
-        assert result.needs_handoff is True
-        assert result.handoff_reason is not None
+        # Handoff should never be triggered anymore
+        assert result.needs_handoff is False
+        assert result.handoff_reason is None
 
     def test_check_circuit_breaker_closed(self, project_path: Path) -> None:
         """Circuit breaker closed by default."""
@@ -230,7 +229,6 @@ class TestPhaseResult:
         assert result.tasks_blocked == 0
         assert result.error is None
         assert result.should_transition is False
-        assert result.needs_handoff is False
 
 
 class TestBuildDiscoveryPrompt:

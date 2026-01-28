@@ -7,7 +7,6 @@ import yaml
 
 from ralph.config import (
     BuildConfig,
-    ContextConfig,
     CostController,
     CostLimits,
     PhaseConfig,
@@ -47,7 +46,6 @@ class TestRalphConfig:
 
         assert isinstance(config.project, ProjectConfig)
         assert isinstance(config.build, BuildConfig)
-        assert isinstance(config.context, ContextConfig)
         assert isinstance(config.safety, SafetyConfig)
 
     def test_phase_configs(self) -> None:
@@ -81,9 +79,6 @@ class TestLoadConfig:
                 "tool": "uv",
                 "test_command": "uv run pytest -v",
             },
-            "context": {
-                "budget_percent": 70,
-            },
             "safety": {
                 "sandbox_enabled": False,
                 "cost_limits": {
@@ -102,7 +97,6 @@ class TestLoadConfig:
         assert config.project.name == "test-project"
         assert config.project.python_version == "3.12"
         assert config.build.test_command == "uv run pytest -v"
-        assert config.context.budget_percent == 70
         assert config.safety.sandbox_enabled is False
         assert config.cost_limits.per_iteration == 5.0
         assert config.cost_limits.total == 500.0
@@ -163,13 +157,11 @@ class TestEnvOverrides:
         """Numeric environment variables are parsed."""
         monkeypatch.setenv("RALPH_MAX_ITERATIONS", "50")
         monkeypatch.setenv("RALPH_MAX_COST_USD", "100.0")
-        monkeypatch.setenv("RALPH_CONTEXT_BUDGET_PERCENT", "70")
 
         config = load_config(project_path)
 
         assert config.max_iterations == 50
         assert config.cost_limits.total == 100.0
-        assert config.context.budget_percent == 70
 
 
 class TestSaveConfig:

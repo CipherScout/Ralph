@@ -162,15 +162,6 @@ class TestBuildIterationContext:
         assert context.current_task is not None
         assert context.current_task["id"] == "task-3"
 
-    def test_calculates_usage_percentage(
-        self, state: RalphState, plan_with_tasks: ImplementationPlan, project_path: Path
-    ) -> None:
-        """Calculates context usage percentage."""
-        state.context_budget.set_usage(100_000)
-        context = build_iteration_context(state, plan_with_tasks, project_path)
-
-        assert context.usage_percentage == 50.0  # 100k / 200k
-
     def test_includes_injections(
         self, state: RalphState, plan_with_tasks: ImplementationPlan, project_path: Path
     ) -> None:
@@ -271,7 +262,7 @@ class TestArchiveSession:
 
     def test_archives_session(self, state: RalphState, project_path: Path) -> None:
         """Archives session to history."""
-        path = archive_session(state, "context_budget", project_path)
+        path = archive_session(state, "manual_handoff", project_path)
 
         assert path.exists()
         assert "sessions.jsonl" in str(path)
@@ -331,7 +322,7 @@ class TestExecuteContextHandoff:
     ) -> None:
         """Executes successful handoff."""
         result = execute_context_handoff(
-            state, plan_with_tasks, project_path, "context_budget"
+            state, plan_with_tasks, project_path, "manual_handoff"
         )
 
         assert result.success is True
@@ -371,31 +362,11 @@ class TestExecuteContextHandoff:
 
 
 class TestShouldTriggerHandoff:
-    """Tests for should_trigger_handoff."""
+    """Tests for should_trigger_handoff - always returns False now."""
 
-    def test_triggers_at_threshold(self, project_path: Path) -> None:
-        """Triggers at context budget threshold (80% per SPEC-005)."""
+    def test_never_triggers(self, project_path: Path) -> None:
+        """Never triggers handoff (context budget tracking removed)."""
         state = RalphState(project_root=project_path)
-        state.context_budget.set_usage(160_001)  # > 80% (SPEC-005 threshold)
-
-        should_trigger, reason = should_trigger_handoff(state)
-        assert should_trigger is True
-        assert reason == "context_budget_threshold"
-
-    def test_triggers_at_warning_level(self, project_path: Path) -> None:
-        """Triggers at warning level (75%)."""
-        state = RalphState(project_root=project_path)
-        state.context_budget.set_usage(150_001)  # > 75%
-
-        should_trigger, reason = should_trigger_handoff(state)
-        assert should_trigger is True
-        # Either threshold or warning is valid
-        assert reason in ["context_budget_threshold", "context_budget_warning"]
-
-    def test_no_trigger_below_threshold(self, project_path: Path) -> None:
-        """No trigger below threshold."""
-        state = RalphState(project_root=project_path)
-        state.context_budget.set_usage(100_000)  # 50%
 
         should_trigger, reason = should_trigger_handoff(state)
         assert should_trigger is False

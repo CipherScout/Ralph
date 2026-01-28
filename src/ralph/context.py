@@ -200,14 +200,6 @@ def build_iteration_context(
             "retry_count": next_task.retry_count,
         }
 
-    # Calculate usage percentage
-    if state.context_budget.total_capacity > 0:
-        usage_pct = (
-            state.context_budget.current_usage / state.context_budget.total_capacity * 100
-        )
-    else:
-        usage_pct = 0.0
-
     return IterationContext(
         iteration=state.iteration_count,
         phase=state.current_phase,
@@ -218,8 +210,8 @@ def build_iteration_context(
         total_pending_tasks=plan.pending_count,
         memory_content=load_memory_file(project_root),
         injections=load_injections(project_root),
-        remaining_tokens=state.context_budget.available_tokens,
-        usage_percentage=usage_pct,
+        remaining_tokens=0,  # No longer tracked
+        usage_percentage=0.0,  # No longer tracked
     )
 
 
@@ -555,23 +547,14 @@ def execute_context_handoff(
 def should_trigger_handoff(state: RalphState) -> tuple[bool, str | None]:
     """Check if a context hand-off should be triggered.
 
+    Context budget tracking has been removed - handoffs are no longer triggered automatically.
+
     Args:
         state: Current Ralph state
 
     Returns:
-        Tuple of (should_handoff, reason)
+        Tuple of (should_handoff, reason) - always (False, None)
     """
-    # Check context budget
-    if state.needs_handoff():
-        return True, "context_budget_threshold"
-
-    # Check if approaching effective capacity (more urgent)
-    budget = state.context_budget
-    if budget.total_capacity > 0:
-        usage_ratio = budget.current_usage / budget.total_capacity
-        if usage_ratio >= 0.75:
-            return True, "context_budget_warning"
-
     return False, None
 
 

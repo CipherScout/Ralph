@@ -14,7 +14,6 @@ from ralph.config import RalphConfig, load_config
 from ralph.context import (
     build_iteration_context,
     execute_context_handoff,
-    should_trigger_handoff,
 )
 from ralph.models import (
     ImplementationPlan,
@@ -111,8 +110,11 @@ class PhaseOrchestrator:
         return self.state.should_halt()
 
     def check_context_budget(self) -> tuple[bool, str | None]:
-        """Check if context handoff is needed."""
-        return should_trigger_handoff(self.state)
+        """Check if context handoff is needed.
+
+        Context budget tracking has been removed - always returns (False, None).
+        """
+        return False, None
 
     def should_pause(self) -> bool:
         """Check if loop should pause."""

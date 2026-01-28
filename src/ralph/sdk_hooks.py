@@ -215,38 +215,11 @@ def create_cost_limit_hook(
     return HookMatcher(matcher="*", hooks=[check_cost_limit])  # type: ignore[list-item]
 
 
-def create_context_budget_hook(state: RalphState) -> HookMatcher:
-    """Create hook to check context budget before tool use.
-
-    Args:
-        state: Current Ralph state
-
-    Returns:
-        HookMatcher for all tools
-    """
-
-    async def check_context_budget(
-        input_data: HookInput,
-        tool_use_id: str | None,
-        context: HookContext,
-    ) -> HookJSONOutput:
-        """Check if context budget is exhausted."""
-        if state.needs_handoff():
-            return _deny_response(
-                f"Context budget exceeded ({state.context_budget.current_usage} tokens)",
-                "Complete current task and trigger handoff to fresh session.",
-            )
-        return _allow_response()
-
-    return HookMatcher(matcher="*", hooks=[check_context_budget])  # type: ignore[list-item]
-
-
 def get_ralph_hooks(
     state: RalphState,
     max_cost_per_iteration: float = 2.0,
     include_phase_validation: bool = True,
     include_cost_limits: bool = True,
-    include_context_budget: bool = True,
 ) -> dict[str, list[HookMatcher]]:
     """Get all Ralph hooks for the Claude Agent SDK.
 
@@ -255,7 +228,6 @@ def get_ralph_hooks(
         max_cost_per_iteration: Maximum cost per iteration
         include_phase_validation: Whether to include phase validation
         include_cost_limits: Whether to include cost limit checks
-        include_context_budget: Whether to include context budget checks
 
     Returns:
         Dict of hook event names to HookMatcher lists
@@ -270,9 +242,6 @@ def get_ralph_hooks(
 
     if include_cost_limits:
         pre_tool_use_hooks.append(create_cost_limit_hook(state, max_cost_per_iteration))
-
-    if include_context_budget:
-        pre_tool_use_hooks.append(create_context_budget_hook(state))
 
     return {
         "PreToolUse": pre_tool_use_hooks,

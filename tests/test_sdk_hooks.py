@@ -6,12 +6,11 @@ from typing import Any, cast
 import pytest
 from claude_agent_sdk.types import HookContext, PreToolUseHookInput
 
-from ralph.models import ContextBudget, Phase, RalphState
+from ralph.models import Phase, RalphState
 from ralph.sdk_hooks import (
     _allow_response,
     _deny_response,
     create_bash_safety_hook,
-    create_context_budget_hook,
     create_cost_limit_hook,
     create_phase_validation_hook,
     create_uv_enforcement_hook,
@@ -55,17 +54,11 @@ def as_dict(result: Any) -> dict[str, Any]:
 def create_mock_state(
     phase: Phase = Phase.BUILDING,
     session_cost: float = 0.0,
-    context_usage: int = 0,
-    context_capacity: int = 200_000,
 ) -> RalphState:
     """Create a mock RalphState for testing."""
     state = RalphState(project_root=Path("/tmp/test"))
     state.current_phase = phase
     state.session_cost_usd = session_cost
-    state.context_budget = ContextBudget(
-        total_capacity=context_capacity,
-        current_usage=context_usage,
-    )
     return state
 
 
@@ -554,39 +547,6 @@ class TestCostLimitHook:
         assert as_dict(result)["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
-class TestContextBudgetHook:
-    """Tests for context budget hook."""
-
-    @pytest.mark.asyncio
-    async def test_allows_under_budget(self) -> None:
-        """Allows tool use when under context budget."""
-        state = create_mock_state(context_usage=50_000, context_capacity=200_000)
-        hook = create_context_budget_hook(state)
-        hook_fn = hook.hooks[0]
-        result = await hook_fn(
-            create_pre_tool_use_input("Read", {}),
-            "test-id",
-            create_hook_context(),
-        )
-        assert result == {}
-
-    @pytest.mark.asyncio
-    async def test_blocks_over_budget(self) -> None:
-        """Blocks tool use when over context budget (80% per SPEC-005)."""
-        # Set usage to trigger handoff (> 80% of capacity per SPEC-005)
-        state = create_mock_state(context_usage=165_000, context_capacity=200_000)
-        hook = create_context_budget_hook(state)
-        hook_fn = hook.hooks[0]
-        result = await hook_fn(
-            create_pre_tool_use_input("Read", {}),
-            "test-id",
-            create_hook_context(),
-        )
-        assert as_dict(result)["hookSpecificOutput"]["permissionDecision"] == "deny"
-        reason = as_dict(result)["hookSpecificOutput"]["permissionDecisionReason"].lower()
-        assert "budget" in reason
-
-
 class TestGetRalphHooks:
     """Tests for get_ralph_hooks function."""
 
@@ -601,8 +561,8 @@ class TestGetRalphHooks:
         """Includes bash safety hook."""
         state = create_mock_state()
         hooks = get_ralph_hooks(state)
-        # Should have at least 4 hooks with all options enabled
-        assert len(hooks["PreToolUse"]) >= 4
+        # Should have at least 3 hooks with all options enabled (bash, uv, phase, cost)
+        assert len(hooks["PreToolUse"]) >= 3
 
     def test_excludes_phase_validation_when_disabled(self) -> None:
         """Excludes phase validation hook when disabled."""
@@ -616,13 +576,6 @@ class TestGetRalphHooks:
         state = create_mock_state()
         hooks_with = get_ralph_hooks(state, include_cost_limits=True)
         hooks_without = get_ralph_hooks(state, include_cost_limits=False)
-        assert len(hooks_without["PreToolUse"]) < len(hooks_with["PreToolUse"])
-
-    def test_excludes_context_budget_when_disabled(self) -> None:
-        """Excludes context budget hook when disabled."""
-        state = create_mock_state()
-        hooks_with = get_ralph_hooks(state, include_context_budget=True)
-        hooks_without = get_ralph_hooks(state, include_context_budget=False)
         assert len(hooks_without["PreToolUse"]) < len(hooks_with["PreToolUse"])
 
     def test_respects_custom_cost_limit(self) -> None:

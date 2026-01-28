@@ -16,7 +16,6 @@ from typing import Any, TypeVar
 
 from ralph.models import (
     CircuitBreakerState,
-    ContextBudget,
     ImplementationPlan,
     Phase,
     RalphState,
@@ -127,17 +126,6 @@ def _deserialize_circuit_breaker(data: dict[str, Any]) -> CircuitBreakerState:
     )
 
 
-def _deserialize_context_budget(data: dict[str, Any]) -> ContextBudget:
-    """Deserialize ContextBudget from a dict."""
-    return ContextBudget(
-        total_capacity=data.get("total_capacity", 200_000),
-        system_prompt_allocation=data.get("system_prompt_allocation", 5_000),
-        safety_margin=data.get("safety_margin", 0.20),
-        current_usage=data.get("current_usage", 0),
-        tool_results_tokens=data.get("tool_results_tokens", 0),
-    )
-
-
 def _deserialize_ralph_state(data: dict[str, Any]) -> RalphState:
     """Deserialize RalphState from a dict."""
     return RalphState(
@@ -157,7 +145,6 @@ def _deserialize_ralph_state(data: dict[str, Any]) -> RalphState:
             else datetime.now()
         ),
         circuit_breaker=_deserialize_circuit_breaker(data.get("circuit_breaker", {})),
-        context_budget=_deserialize_context_budget(data.get("context_budget", {})),
         session_cost_usd=data.get("session_cost_usd", 0.0),
         session_tokens_used=data.get("session_tokens_used", 0),
         tasks_completed_this_session=data.get("tasks_completed_this_session", 0),

@@ -7,7 +7,6 @@ import pytest
 
 from ralph.models import (
     CircuitBreakerState,
-    ContextBudget,
     ImplementationPlan,
     Phase,
     RalphState,
@@ -54,13 +53,6 @@ def sample_state(temp_project: Path) -> RalphState:
             failure_count=1,
             stagnation_count=2,
             last_failure_reason=None,
-        ),
-        context_budget=ContextBudget(
-            total_capacity=200000,
-            system_prompt_allocation=5000,
-            safety_margin=0.20,
-            current_usage=80000,
-            tool_results_tokens=30000,
         ),
         session_cost_usd=0.75,
         session_tokens_used=25000,
@@ -207,22 +199,6 @@ class TestSaveAndLoadState:
         assert cb.failure_count == orig.failure_count
         assert cb.stagnation_count == orig.stagnation_count
         assert cb.last_failure_reason == orig.last_failure_reason
-
-    def test_round_trip_preserves_context_budget(
-        self, temp_project: Path, sample_state: RalphState
-    ) -> None:
-        """Save then load preserves context budget."""
-        temp_project.mkdir(parents=True)
-        save_state(sample_state, temp_project)
-        loaded = load_state(temp_project)
-
-        budget = loaded.context_budget
-        orig = sample_state.context_budget
-        assert budget.total_capacity == orig.total_capacity
-        assert budget.system_prompt_allocation == orig.system_prompt_allocation
-        assert budget.safety_margin == orig.safety_margin
-        assert budget.current_usage == orig.current_usage
-        assert budget.tool_results_tokens == orig.tool_results_tokens
 
     def test_load_missing_state_raises_error(self, temp_project: Path) -> None:
         """Load raises StateNotFoundError when file missing."""
@@ -396,7 +372,6 @@ class TestInitializeFunctions:
         assert state.current_phase == Phase.BUILDING
         assert state.total_cost_usd == 0.0
         assert state.circuit_breaker.state == "closed"
-        assert state.context_budget.current_usage == 0
 
 
 class TestPhaseHandling:

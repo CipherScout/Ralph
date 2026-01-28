@@ -4,7 +4,6 @@ __version__ = "0.1.0"
 
 from ralph.models import (
     CircuitBreakerState,
-    ContextBudget,
     ImplementationPlan,
     Phase,
     RalphState,
@@ -21,7 +20,6 @@ __all__ = [
     "__version__",
     # Models
     "CircuitBreakerState",
-    "ContextBudget",
     "ImplementationPlan",
     "Phase",
     "RalphState",

@@ -2,7 +2,6 @@
 
 This module provides the main orchestration loop that:
 - Controls phase transitions
-- Manages context windows via handoffs
 - Enforces circuit breaker limits
 - Handles recovery from failures
 """
@@ -52,7 +51,7 @@ class RunnerIterationResult:
     """Result of a single iteration from the loop runner.
 
     Note: This is distinct from sdk_client.IterationResult which contains
-    SDK-specific fields like metrics and needs_handoff.
+    SDK-specific fields like metrics.
     """
 
     iteration: int

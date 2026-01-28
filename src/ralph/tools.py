@@ -372,12 +372,6 @@ class RalphTools:
                 "total_tokens": state.total_tokens_used,
                 "session_tokens": state.session_tokens_used,
                 "tasks_completed_this_session": state.tasks_completed_this_session,
-                "context_usage_pct": (
-                    state.context_budget.current_usage / state.context_budget.total_capacity * 100
-                    if state.context_budget.total_capacity > 0
-                    else 0
-                ),
-                "needs_handoff": state.needs_handoff(),
                 "circuit_breaker": {
                     "state": state.circuit_breaker.state,
                     "failure_count": state.circuit_breaker.failure_count,
@@ -395,7 +389,6 @@ class RalphTools:
                 f"Phase: {summary['phase']}, Iteration: {summary['iteration']}",
                 f"Session tasks: {summary['tasks_completed_this_session']}, "
                 f"Cost: ${summary['session_cost_usd']:.4f}",
-                f"Context: {summary['context_usage_pct']:.1f}% used",
                 f"Circuit breaker: {circuit_breaker_info['state']}",
             ]
             if should_halt:

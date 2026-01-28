@@ -153,14 +153,6 @@ class TestStatus:
         assert "Circuit Breaker" in result.stdout
         assert "closed" in result.stdout.lower()
 
-    def test_status_shows_context_budget(self, tmp_path: Path) -> None:
-        """Test status shows context budget."""
-        initialize_state(tmp_path)
-        result = runner.invoke(app, ["status", "-p", str(tmp_path)])
-        assert result.exit_code == 0
-        assert "Context Budget" in result.stdout
-        assert "Smart Zone" in result.stdout
-
     def test_status_verbose_shows_tasks(self, tmp_path: Path) -> None:
         """Test status --verbose shows task list."""
         initialize_state(tmp_path)

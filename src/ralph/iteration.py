@@ -199,11 +199,7 @@ async def execute_single_iteration(
                 config=cfg,
             ),
             task=task,
-            usage_percentage=(
-                state.context_budget.current_usage / state.context_budget.total_capacity * 100
-                if state.context_budget.total_capacity > 0
-                else 0
-            ),
+            usage_percentage=0.0,  # No longer tracked
             session_id=state.session_id,
         )
         prompt = ctx.get_user_prompt()

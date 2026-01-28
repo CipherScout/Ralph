@@ -4,7 +4,6 @@ from pathlib import Path
 
 from ralph.models import (
     CircuitBreakerState,
-    ContextBudget,
     ImplementationPlan,
     Phase,
     RalphState,
@@ -331,110 +330,6 @@ class TestCircuitBreakerProgressMade:
         assert cb.stagnation_count == 0
 
 
-class TestContextBudget:
-    """Tests for ContextBudget model."""
-
-    def test_effective_capacity(self) -> None:
-        """Effective capacity accounts for safety margin (85% with 15% margin)."""
-        budget = ContextBudget(total_capacity=200_000, safety_margin=0.15)
-        assert budget.effective_capacity == 170_000  # 85% of 200k
-
-    def test_effective_capacity_with_custom_margin(self) -> None:
-        """Effective capacity works with custom safety margin."""
-        budget = ContextBudget(total_capacity=200_000, safety_margin=0.20)
-        assert budget.effective_capacity == 160_000  # 80% of 200k
-
-    def test_smart_zone_max_at_80_percent(self) -> None:
-        """Smart zone max (handoff threshold) is 80% of total capacity (SPEC-005)."""
-        budget = ContextBudget(total_capacity=200_000)
-        assert budget.smart_zone_max == 160_000  # 80% of 200k
-
-    def test_warning_zone_at_70_percent(self) -> None:
-        """Warning zone is 70% of total capacity (SPEC-005)."""
-        budget = ContextBudget(total_capacity=200_000)
-        assert budget.warning_zone == 140_000  # 70% of 200k
-
-    def test_emergency_zone_at_90_percent(self) -> None:
-        """Emergency zone is 90% of total capacity (SPEC-005)."""
-        budget = ContextBudget(total_capacity=200_000)
-        assert budget.emergency_zone == 180_000  # 90% of 200k
-
-    def test_should_handoff_at_80_percent(self) -> None:
-        """Handoff triggers at 80%, not 60% (SPEC-005)."""
-        budget = ContextBudget(total_capacity=200_000)
-        # At 60% - should NOT handoff (old behavior would handoff here)
-        budget.current_usage = 120_000
-        assert budget.should_handoff() is False
-        # At 79% - still not handoff
-        budget.current_usage = 158_000
-        assert budget.should_handoff() is False
-        # At 80% - should handoff
-        budget.current_usage = 160_000
-        assert budget.should_handoff() is True
-
-    def test_should_warn_at_70_percent(self) -> None:
-        """Warning should trigger at 70% but not above 80% (SPEC-005)."""
-        budget = ContextBudget(total_capacity=200_000)
-        # Below 70% - no warning
-        budget.current_usage = 130_000
-        assert budget.should_warn() is False
-        # At 70% - warning
-        budget.current_usage = 140_000
-        assert budget.should_warn() is True
-        # Between 70-80% - warning
-        budget.current_usage = 155_000
-        assert budget.should_warn() is True
-        # At 80%+ - no warning (handoff takes over)
-        budget.current_usage = 160_000
-        assert budget.should_warn() is False
-
-    def test_should_emergency_exit_at_90_percent(self) -> None:
-        """Emergency exit triggers at 90% (SPEC-005)."""
-        budget = ContextBudget(total_capacity=200_000)
-        # Below 90% - no emergency
-        budget.current_usage = 175_000
-        assert budget.should_emergency_exit() is False
-        # At 90% - emergency
-        budget.current_usage = 180_000
-        assert budget.should_emergency_exit() is True
-
-    def test_configurable_thresholds(self) -> None:
-        """Thresholds can be configured (SPEC-005)."""
-        budget = ContextBudget(
-            total_capacity=200_000,
-            handoff_threshold=0.85,
-            warning_threshold=0.75,
-            emergency_threshold=0.95,
-        )
-        assert budget.smart_zone_max == 170_000  # 85%
-        assert budget.warning_zone == 150_000  # 75%
-        assert budget.emergency_zone == 190_000  # 95%
-
-    def test_default_thresholds(self) -> None:
-        """Default thresholds match SPEC-005 requirements."""
-        budget = ContextBudget()
-        assert budget.handoff_threshold == 0.80
-        assert budget.warning_threshold == 0.70
-        assert budget.emergency_threshold == 0.90
-        assert budget.safety_margin == 0.15
-
-    def test_available_tokens(self) -> None:
-        """Available tokens calculated correctly."""
-        budget = ContextBudget(total_capacity=200_000)
-        assert budget.available_tokens == 170_000  # 85% effective capacity
-        budget.set_usage(50_000)
-        assert budget.available_tokens == 120_000
-
-    def test_reset(self) -> None:
-        """Reset clears usage tracking."""
-        budget = ContextBudget()
-        budget.set_usage(100_000)
-        budget.tool_results_tokens = 5_000
-        budget.reset()
-        assert budget.current_usage == 0
-        assert budget.tool_results_tokens == 0
-
-
 class TestRalphState:
     """Tests for RalphState model."""
 
@@ -475,20 +370,10 @@ class TestRalphState:
         assert state.total_tokens_used == 10_000
 
     def test_advance_phase(self) -> None:
-        """Advancing phase updates phase and resets context."""
+        """Advancing phase updates phase."""
         state = RalphState(project_root=Path("/test"))
-        state.context_budget.set_usage(50_000)
         state.advance_phase(Phase.VALIDATION)
         assert state.current_phase == Phase.VALIDATION
-        assert state.context_budget.current_usage == 0
-
-    def test_needs_handoff(self) -> None:
-        """Needs handoff delegates to context budget (80% threshold per SPEC-005)."""
-        state = RalphState(project_root=Path("/test"))
-        assert state.needs_handoff() is False
-        # At 80% (160k of 200k) - should handoff
-        state.context_budget.current_usage = 160_000
-        assert state.needs_handoff() is True
 
     def test_should_halt(self) -> None:
         """Should halt delegates to circuit breaker."""
