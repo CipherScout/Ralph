@@ -36,8 +36,6 @@ from rich.prompt import Prompt
 
 from ralph.events import (
     StreamEvent,
-    context_emergency_event,
-    context_warning_event,
     error_event,
     iteration_end_event,
     iteration_start_event,
@@ -583,7 +581,7 @@ class RalphSDKClient:
         metrics.duration_ms = int((end_time - start_time).total_seconds() * 1000)
         total_tokens = metrics.input_tokens + metrics.output_tokens
 
-        # Only calculate cost if SDK didn't provide it (SPEC-005)
+        # Calculate cost if SDK didn't provide it
         if metrics.cost_usd == 0.0 and total_tokens > 0:
             metrics.cost_usd = calculate_cost(
                 metrics.input_tokens,
@@ -780,12 +778,12 @@ class RalphSDKClient:
         duration_ms = int((end_time - start_time).total_seconds() * 1000)
         total_tokens = input_tokens + output_tokens
 
-        # Only calculate cost if SDK didn't provide it (SPEC-005)
+        # Calculate cost if SDK didn't provide it
         if cost_usd == 0.0 and total_tokens > 0:
             cost_usd = calculate_cost(
                 input_tokens,
                 output_tokens,
-                get_model_for_phase(current_phase, self.config),
+                get_model_for_phase(phase or current_phase, self.config),
             )
 
         # Yield iteration end event with summary

@@ -1014,7 +1014,10 @@ Start by reading the specs and analyzing the codebase."""
                     iterations_run=iterations_run,
                     cost_usd=total_cost,
                     tokens_used=total_tokens,
-                    error="Planning failed: no tasks were created. The LLM must call ralph_add_task to create implementation tasks.",
+                    error=(
+                        "Planning failed: no tasks were created. "
+                        "The LLM must call ralph_add_task to create implementation tasks."
+                    ),
                     needs_phase_transition=False,
                 )
 
@@ -1142,6 +1145,8 @@ Start by reading the specs and analyzing the codebase."""
 
             # Validate that tasks were actually created before transitioning
             if task_count == 0:
+                from ralph.events import error_event
+
                 yield error_event(
                     "Planning failed: no tasks were created. "
                     "The LLM must call ralph_add_task to create implementation tasks.",

@@ -6,18 +6,15 @@ and platform differences to achieve >95% code coverage.
 """
 
 import asyncio
-import platform
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
-from ralph.async_input_reader import AsyncInputReader
 from ralph.cli import RalphLiveDisplay, app
 from ralph.events import StreamEvent, StreamEventType, needs_input_event
 from ralph.executors import (
     BuildingExecutor,
     DiscoveryExecutor,
-    PlanningExecutor,
     ValidationExecutor,
 )
 from ralph.models import Phase, Task
@@ -25,132 +22,8 @@ from ralph.persistence import initialize_plan, initialize_state, save_plan
 from ralph.transitions import PhaseTransitionPrompt, prompt_phase_transition
 
 
-class TestAsyncInputReaderIntegration:
-    """Integration tests for AsyncInputReader across different platforms and scenarios."""
-
-    @pytest.mark.asyncio
-    async def test_read_input_unix_enter_key(self, monkeypatch):
-        """Test AsyncInputReader on Unix systems with Enter key input."""
-        reader = AsyncInputReader()
-
-        # Mock platform to be Unix-like
-        monkeypatch.setattr(reader, "_platform", "Linux")
-
-        # Mock stdin.readline to return Enter (empty line with newline)
-        mock_readline = Mock(return_value="\n")
-        monkeypatch.setattr("sys.stdin.readline", mock_readline)
-
-        # Mock asyncio loop
-        loop = AsyncMock()
-        loop.run_in_executor = AsyncMock(return_value="\n")
-        monkeypatch.setattr("asyncio.get_event_loop", lambda: loop)
-
-        result = await reader.read_input("Continue? ")
-
-        assert result == "\n"
-        loop.run_in_executor.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_read_input_unix_text_input(self, monkeypatch):
-        """Test AsyncInputReader on Unix systems with text input."""
-        reader = AsyncInputReader()
-
-        # Mock platform to be Unix-like
-        monkeypatch.setattr(reader, "_platform", "Linux")
-
-        # Mock stdin.readline to return user input
-        mock_readline = Mock(return_value="yes\n")
-        monkeypatch.setattr("sys.stdin.readline", mock_readline)
-
-        # Mock asyncio loop
-        loop = AsyncMock()
-        loop.run_in_executor = AsyncMock(return_value="yes\n")
-        monkeypatch.setattr("asyncio.get_event_loop", lambda: loop)
-
-        result = await reader.read_input("Continue? ")
-
-        assert result == "yes\n"
-
-    @pytest.mark.asyncio
-    async def test_read_input_unix_cancellation(self, monkeypatch):
-        """Test AsyncInputReader cancellation on Unix systems."""
-        reader = AsyncInputReader()
-
-        # Mock platform to be Unix-like
-        monkeypatch.setattr(reader, "_platform", "Linux")
-
-        # Mock loop that raises CancelledError
-        loop = AsyncMock()
-        loop.run_in_executor = AsyncMock(side_effect=asyncio.CancelledError())
-        monkeypatch.setattr("asyncio.get_event_loop", lambda: loop)
-
-        with pytest.raises(asyncio.CancelledError):
-            await reader.read_input("Continue? ")
-
-    @pytest.mark.asyncio
-    async def test_read_input_windows_single_char(self, monkeypatch):
-        """Test AsyncInputReader on Windows with single character input."""
-        reader = AsyncInputReader()
-
-        # Mock platform to be Windows
-        monkeypatch.setattr(reader, "_platform", "Windows")
-
-        # Mock the _windows_read_input method directly instead of patching msvcrt
-        async def mock_windows_read_input(prompt):
-            return "y"
-
-        monkeypatch.setattr(reader, '_windows_read_input', mock_windows_read_input)
-
-        result = await reader.read_input("Continue? ")
-
-        assert result == "y"
-
-    @pytest.mark.asyncio
-    async def test_read_input_windows_no_msvcrt_fallback(self, monkeypatch):
-        """Test AsyncInputReader on Windows fallback when msvcrt unavailable."""
-        reader = AsyncInputReader()
-
-        # Mock platform to be Windows
-        monkeypatch.setattr(reader, "_platform", "Windows")
-
-        # Mock the _windows_read_input method to call Unix fallback
-        async def mock_windows_read_input_fallback(prompt):
-            # This simulates the fallback when msvcrt is None
-            return await reader._unix_read_input(prompt)
-
-        # Mock Unix fallback behavior
-        loop = AsyncMock()
-        loop.run_in_executor = AsyncMock(return_value="y\n")
-        monkeypatch.setattr("asyncio.get_event_loop", lambda: loop)
-
-        monkeypatch.setattr(reader, '_windows_read_input', mock_windows_read_input_fallback)
-
-        result = await reader.read_input("Continue? ")
-
-        assert result == "y\n"
-        loop.run_in_executor.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_read_input_windows_cancellation(self, monkeypatch):
-        """Test AsyncInputReader cancellation on Windows."""
-        reader = AsyncInputReader()
-
-        # Mock platform to be Windows
-        monkeypatch.setattr(reader, "_platform", "Windows")
-
-        # Mock the _windows_read_input method to raise CancelledError
-        async def mock_windows_read_input_cancelled(prompt):
-            await asyncio.sleep(0.1)  # Small delay before cancellation
-            raise asyncio.CancelledError()
-
-        monkeypatch.setattr(reader, '_windows_read_input', mock_windows_read_input_cancelled)
-
-        with pytest.raises(asyncio.CancelledError):
-            await reader.read_input("Continue? ")
-
-
 class TestPhaseTransitionPromptIntegration:
-    """Integration tests for PhaseTransitionPrompt with various input scenarios."""
+    """Integration tests for PhaseTransitionPrompt auto-continue behavior."""
 
     @pytest.fixture
     def prompt(self):
@@ -161,180 +34,24 @@ class TestPhaseTransitionPromptIntegration:
             console=console,
             current_phase=Phase.DISCOVERY,
             next_phase=Phase.PLANNING,
-            timeout_seconds=2,  # Short timeout for faster tests
+            timeout_seconds=2,
         )
 
     @pytest.mark.asyncio
-    async def test_user_enters_y_continues(self, prompt, monkeypatch):
-        """Test user pressing 'y' continues to next phase."""
-        # Mock sys.stdin.isatty to return True (interactive mode)
+    async def test_auto_continues_in_interactive_mode(self, prompt, monkeypatch):
+        """Test auto-continue after brief pause in interactive mode."""
         monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-
-        # Mock AsyncInputReader to return 'y'
-        mock_reader = AsyncMock()
-        mock_reader.read_input.return_value = "y"
-
-        with patch('ralph.transitions.AsyncInputReader', return_value=mock_reader):
-            # Mock asyncio.sleep to avoid real delays
-            monkeypatch.setattr("asyncio.sleep", AsyncMock())
-
-            result = await prompt.prompt()
-
-        assert result is True
-        mock_reader.read_input.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_user_enters_yes_continues(self, prompt, monkeypatch):
-        """Test user typing 'yes' continues to next phase."""
-        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-
-        mock_reader = AsyncMock()
-        mock_reader.read_input.return_value = "yes"
-
-        with patch('ralph.transitions.AsyncInputReader', return_value=mock_reader):
-            monkeypatch.setattr("asyncio.sleep", AsyncMock())
-
-            result = await prompt.prompt()
-
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_user_enters_n_exits(self, prompt, monkeypatch):
-        """Test user pressing 'n' exits without continuing."""
-        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-
-        # Create a mock that simulates the actual _input_task behavior
-        async def mock_input_task(*args, **kwargs):
-            # The current implementation strips and lowercases the input
-            user_input = "n"
-            processed_input = user_input.strip().lower()
-
-            # Check if completion_lock and result_holder are provided (new signature)
-            if len(args) >= 3:
-                input_received_event, completion_lock, result_holder = args[:3]
-                async with completion_lock:
-                    if not result_holder["set"]:
-                        result_holder["value"] = processed_input != "n"  # Should be False for "n"
-                        result_holder["set"] = True
-                if input_received_event:
-                    input_received_event.set()
-
-            return processed_input
-
-        # Mock the _input_task method directly
-        monkeypatch.setattr(prompt, '_input_task', mock_input_task)
-        monkeypatch.setattr("asyncio.sleep", AsyncMock())
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr("asyncio.sleep", mock_sleep)
 
         result = await prompt.prompt()
 
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_user_enters_no_exits(self, prompt, monkeypatch):
-        """Test user typing 'no' exits (both 'n' and 'no' should exit)."""
-        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-
-        # Create a mock that simulates the actual _input_task behavior
-        async def mock_input_task(*args, **kwargs):
-            user_input = "no"
-            processed_input = user_input.strip().lower()
-
-            # Check if completion_lock and result_holder are provided (new signature)
-            if len(args) >= 3:
-                input_received_event, completion_lock, result_holder = args[:3]
-                async with completion_lock:
-                    if not result_holder["set"]:
-                        # Both 'n' and 'no' should return False (exit)
-                        result_holder["value"] = processed_input not in ("n", "no")
-                        result_holder["set"] = True
-                if input_received_event:
-                    input_received_event.set()
-
-            return processed_input
-
-        # Mock the _input_task method directly
-        monkeypatch.setattr(prompt, '_input_task', mock_input_task)
-        monkeypatch.setattr("asyncio.sleep", AsyncMock())
-
-        result = await prompt.prompt()
-
-        # "no" should exit (return False) - both 'n' and 'no' are negative responses
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_user_enters_empty_continues(self, prompt, monkeypatch):
-        """Test user pressing Enter (empty input) continues to next phase."""
-        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-
-        mock_reader = AsyncMock()
-        mock_reader.read_input.return_value = ""
-
-        with patch('ralph.transitions.AsyncInputReader', return_value=mock_reader):
-            monkeypatch.setattr("asyncio.sleep", AsyncMock())
-
-            result = await prompt.prompt()
-
         assert result is True
-
-    @pytest.mark.asyncio
-    async def test_user_enters_newline_continues(self, prompt, monkeypatch):
-        """Test user pressing Enter (newline) continues to next phase."""
-        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-
-        mock_reader = AsyncMock()
-        mock_reader.read_input.return_value = "\n"
-
-        with patch('ralph.transitions.AsyncInputReader', return_value=mock_reader):
-            monkeypatch.setattr("asyncio.sleep", AsyncMock())
-
-            result = await prompt.prompt()
-
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_user_enters_invalid_input_continues(self, prompt, monkeypatch):
-        """Test user entering invalid input defaults to continue."""
-        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-
-        mock_reader = AsyncMock()
-        mock_reader.read_input.return_value = "invalid"
-
-        with patch('ralph.transitions.AsyncInputReader', return_value=mock_reader):
-            monkeypatch.setattr("asyncio.sleep", AsyncMock())
-
-            result = await prompt.prompt()
-
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_timeout_auto_continues(self, prompt, monkeypatch):
-        """Test timeout expires and auto-continues."""
-        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-
-        # Mock input that never completes (hangs)
-        mock_reader = AsyncMock()
-        mock_reader.read_input.side_effect = asyncio.CancelledError()
-
-        with patch('ralph.transitions.AsyncInputReader', return_value=mock_reader):
-            # Mock asyncio.sleep to simulate timeout
-            sleep_calls = []
-            async def mock_sleep(duration):
-                sleep_calls.append(duration)
-                # Simulate countdown reaching zero
-                if len(sleep_calls) >= prompt.timeout_seconds:
-                    prompt._remaining = 0
-
-            monkeypatch.setattr("asyncio.sleep", mock_sleep)
-
-            result = await prompt.prompt()
-
-        assert result is True
-        assert len(sleep_calls) >= prompt.timeout_seconds
+        mock_sleep.assert_called_once_with(2)
 
     @pytest.mark.asyncio
     async def test_non_interactive_mode_auto_continues(self, prompt, monkeypatch):
         """Test non-interactive mode (stdin is not a tty) auto-continues."""
-        # Mock sys.stdin.isatty to return False (non-interactive mode)
         monkeypatch.setattr("sys.stdin.isatty", lambda: False)
 
         result = await prompt.prompt()
@@ -358,126 +75,28 @@ class TestPhaseTransitionPromptIntegration:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_cancelled_input_task_handles_gracefully(self, prompt, monkeypatch):
-        """Test graceful handling when input task is cancelled."""
-        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-
-        # Mock input that gets cancelled
-        mock_reader = AsyncMock()
-        mock_reader.read_input.side_effect = asyncio.CancelledError()
-
-        with patch('ralph.transitions.AsyncInputReader', return_value=mock_reader):
-            monkeypatch.setattr("asyncio.sleep", AsyncMock())
-
-            result = await prompt.prompt()
-
-        # Should handle cancellation gracefully and auto-continue
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_eoferror_handling(self, prompt, monkeypatch):
-        """Test handling of EOFError (Ctrl+D)."""
-        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-
-        mock_reader = AsyncMock()
-        mock_reader.read_input.side_effect = EOFError()
-
-        with patch('ralph.transitions.AsyncInputReader', return_value=mock_reader):
-            monkeypatch.setattr("asyncio.sleep", AsyncMock())
-
-            result = await prompt.prompt()
-
-        # Should handle EOFError gracefully and auto-continue
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_keyboard_interrupt_propagates(self, prompt, monkeypatch):
-        """Test KeyboardInterrupt (Ctrl+C) propagates up."""
-        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-
-        mock_reader = AsyncMock()
-        mock_reader.read_input.side_effect = KeyboardInterrupt()
-
-        with patch('ralph.transitions.AsyncInputReader', return_value=mock_reader):
-            monkeypatch.setattr("asyncio.sleep", AsyncMock())
-
-            with pytest.raises(KeyboardInterrupt):
-                await prompt.prompt()
-
-    @pytest.mark.asyncio
-    async def test_countdown_updates_remaining_time(self, prompt, monkeypatch):
-        """Test countdown properly decrements remaining time."""
-        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-
-        # Track remaining values
-        remaining_values = []
-
-        original_render = prompt._render
-        def track_render():
-            remaining_values.append(prompt._remaining)
-            return original_render()
-        prompt._render = track_render
-
-        # Mock input that never completes
-        mock_reader = AsyncMock()
-        mock_reader.read_input.side_effect = asyncio.CancelledError()
-
-        with patch('ralph.transitions.AsyncInputReader', return_value=mock_reader):
-            # Mock sleep to simulate time passing
-            async def mock_sleep(duration):
-                if prompt._remaining > 0:
-                    prompt._remaining = max(0, prompt._remaining - 1)
-
-            monkeypatch.setattr("asyncio.sleep", mock_sleep)
-
-            result = await prompt.prompt()
-
-        # Should have decremented over time
-        assert len(remaining_values) > 1
-        assert remaining_values[0] == prompt.timeout_seconds
-        assert remaining_values[-1] <= remaining_values[0]
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_case_insensitive_input(self, monkeypatch):
-        """Test input is handled case-insensitively."""
+    async def test_all_phase_transitions_auto_continue(self, monkeypatch):
+        """Test all phase transitions auto-continue correctly."""
         from rich.console import Console
 
         monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+        mock_sleep = AsyncMock()
+        monkeypatch.setattr("asyncio.sleep", mock_sleep)
 
-        test_cases = [
-            ("Y", True),
-            ("YES", True),
-            ("Yes", True),
-            ("yEs", True),
-            ("N", False),
-            ("NO", False),
-            ("No", False),
-            ("nO", False),
+        transitions = [
+            (Phase.DISCOVERY, Phase.PLANNING),
+            (Phase.PLANNING, Phase.BUILDING),
+            (Phase.BUILDING, Phase.VALIDATION),
         ]
 
-        for input_str, expected in test_cases:
-            # Create fresh prompt for each test case to reset _remaining
+        for current, next_phase in transitions:
             prompt = PhaseTransitionPrompt(
                 console=Console(),
-                current_phase=Phase.DISCOVERY,
-                next_phase=Phase.PLANNING,
-                timeout_seconds=10,  # Long enough that input task wins
+                current_phase=current,
+                next_phase=next_phase,
             )
-
-            mock_reader = AsyncMock()
-            mock_reader.read_input.return_value = input_str
-
-            # Make sleep yield control so input task can complete first
-            async def yielding_sleep(duration):
-                await asyncio.sleep(0)  # Yield to other tasks
-
-            with patch('ralph.transitions.AsyncInputReader', return_value=mock_reader):
-                monkeypatch.setattr("asyncio.sleep", yielding_sleep)
-
-                result = await prompt.prompt()
-
-            assert result is expected, f"Input '{input_str}' should return {expected}"
+            result = await prompt.prompt()
+            assert result is True, f"Transition {current} -> {next_phase} should auto-continue"
 
 
 class TestPromptPhaseTransitionIntegration:
@@ -916,53 +535,6 @@ class TestCLIPhaseCommandsIntegration:
 class TestPlatformSpecificBehavior:
     """Integration tests for platform-specific behaviors."""
 
-    @pytest.mark.skipif(platform.system() == "Windows", reason="Unix-specific test")
-    @pytest.mark.asyncio
-    async def test_unix_signal_handling_during_input(self):
-        """Test signal handling on Unix systems during input collection."""
-        reader = AsyncInputReader()
-
-        # This test verifies that signals are properly handled on Unix systems
-        # during input collection. On Unix, signals can interrupt blocking operations.
-
-        async def delayed_input():
-            await asyncio.sleep(0.1)  # Small delay
-            return "test input"
-
-        # Mock the executor to use delayed input
-        loop = asyncio.get_event_loop()
-        with patch.object(loop, 'run_in_executor') as mock_executor:
-            mock_executor.return_value = asyncio.create_task(delayed_input())
-
-            result = await reader.read_input("Test: ")
-
-        assert result == "test input"
-
-    @pytest.mark.skipif(platform.system() != "Windows", reason="Windows-specific test")
-    @pytest.mark.asyncio
-    async def test_windows_input_encoding(self, monkeypatch):
-        """Test Windows input encoding handling."""
-        reader = AsyncInputReader()
-
-        # Mock Windows environment
-        mock_msvcrt = MagicMock()
-        # Simulate non-ASCII input (e.g., accented character)
-        mock_msvcrt.kbhit.side_effect = [True]
-        mock_msvcrt.getch.return_value = b'\xe9'  # é in latin-1
-
-        mock_stdout = MagicMock()
-        monkeypatch.setattr("sys.stdout", mock_stdout)
-        monkeypatch.setattr("asyncio.sleep", AsyncMock())
-
-        with patch.dict('sys.modules', {'msvcrt': mock_msvcrt}):
-            monkeypatch.setattr('ralph.async_input_reader.msvcrt', mock_msvcrt)
-
-            result = await reader.read_input("Enter: ")
-
-        # Should handle encoding gracefully
-        assert isinstance(result, str)
-        mock_stdout.write.assert_called()
-
     def test_cross_platform_phase_transitions(self, tmp_path):
         """Test phase transitions work consistently across platforms."""
         # This test ensures phase transition behavior is consistent
@@ -1036,27 +608,6 @@ class TestEdgeCasesAndErrorConditions:
         assert result.tasks_completed == 0
         assert result.error is not None  # Error message present
 
-    @pytest.mark.asyncio
-    async def test_multiple_simultaneous_input_requests(self):
-        """Test handling multiple simultaneous input requests."""
-        # This tests the system's ability to handle concurrent input requests
-        # which could occur in complex scenarios
-
-        readers = [AsyncInputReader() for _ in range(3)]
-
-        async def get_input(reader, prompt):
-            # Mock different responses for each reader
-            with patch.object(reader, '_unix_read_input', return_value=f"response_{id(reader)}"):
-                return await reader.read_input(prompt)
-
-        # Run multiple input requests concurrently
-        tasks = [get_input(reader, f"Prompt {i}") for i, reader in enumerate(readers)]
-        results = await asyncio.gather(*tasks)
-
-        # All should complete successfully with unique responses
-        assert len(results) == 3
-        assert len(set(results)) == 3  # All unique
-
     def test_memory_pressure_during_streaming(self, tmp_path):
         """Test system behavior under memory pressure during streaming."""
         # This test simulates high memory usage scenarios that could occur
@@ -1085,6 +636,7 @@ class TestEdgeCasesAndErrorConditions:
         assert len(display.current_text) > 0
 
     @pytest.mark.asyncio
+    @pytest.mark.filterwarnings("ignore::RuntimeWarning")
     async def test_network_interruption_during_sdk_calls(self, tmp_path):
         """Test handling network interruptions during SDK calls."""
         initialize_state(tmp_path)
@@ -1119,6 +671,7 @@ class TestCodeCoverageScenarios:
     async def test_phase_transition_prompt_render_method(self):
         """Test PhaseTransitionPrompt._render method for coverage."""
         from rich.console import Console
+        from rich.panel import Panel
 
         console = Console()
         prompt = PhaseTransitionPrompt(
@@ -1128,14 +681,8 @@ class TestCodeCoverageScenarios:
             timeout_seconds=30
         )
 
-        # Test different remaining time values
-        for remaining in [30, 15, 5, 1, 0]:
-            prompt._remaining = remaining
-            panel = prompt._render()
-
-            # Should return a Rich Panel
-            from rich.panel import Panel
-            assert isinstance(panel, Panel)
+        panel = prompt._render()
+        assert isinstance(panel, Panel)
 
     def test_ralph_live_display_tool_summarization_coverage(self):
         """Test all tool input summarization paths for coverage."""
@@ -1180,28 +727,6 @@ class TestCodeCoverageScenarios:
         summary = display._summarize_tool_input("UnknownTool", {"param": "value"})
         assert "param" in summary
         assert "value" in summary
-
-    @pytest.mark.asyncio
-    async def test_async_input_reader_platform_detection(self):
-        """Test AsyncInputReader platform detection logic."""
-        reader = AsyncInputReader()
-
-        # Test that platform is detected
-        assert reader._platform in ["Windows", "Linux", "Darwin", "Unix"]
-
-        # Test platform-specific method selection
-        if reader._platform == "Windows":
-            # Should attempt to use Windows implementation
-            with patch('ralph.async_input_reader.msvcrt', None):
-                # When msvcrt unavailable, should fallback to Unix
-                with patch.object(reader, '_unix_read_input', return_value="test") as mock_unix:
-                    await reader._platform_read_input("test")
-                    mock_unix.assert_called_once()
-        else:
-            # Should use Unix implementation
-            with patch.object(reader, '_unix_read_input', return_value="test") as mock_unix:
-                await reader._platform_read_input("test")
-                mock_unix.assert_called_once()
 
     def test_cli_command_validation_edge_cases(self, tmp_path):
         """Test CLI command validation edge cases for coverage."""

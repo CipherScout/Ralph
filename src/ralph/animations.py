@@ -178,6 +178,27 @@ def get_tool_category(tool_name: str | None) -> str:
     return tool_categories.get(tool_name, "thinking")
 
 
+def format_token_count(tokens: int) -> str:
+    """Format token count for display with compact representation for large numbers.
+
+    Args:
+        tokens: Number of tokens to format
+
+    Returns:
+        Formatted string (e.g., "1,500", "1.2M", "2.5M")
+    """
+    if tokens >= 1_000_000:
+        # Format millions with one decimal place
+        millions = tokens / 1_000_000
+        return f"{millions:.1f}M"
+    elif tokens >= 1000:
+        # Use comma formatting for thousands
+        return f"{tokens:,}"
+    else:
+        # Regular formatting for small numbers
+        return str(tokens)
+
+
 class ThinkingSpinner:
     """Claude Code-style animated spinner with token counter.
 
@@ -236,7 +257,8 @@ class ThinkingSpinner:
 
         # Token counter if we have tokens
         if self._tokens > 0:
-            text.append(f" ({self._tokens:,} tokens", style="dim")
+            formatted_tokens = format_token_count(self._tokens)
+            text.append(f" ({formatted_tokens} tokens", style="dim")
             if self._cost > 0:
                 text.append(f", ${self._cost:.4f}", style="dim")
             text.append(")", style="dim")

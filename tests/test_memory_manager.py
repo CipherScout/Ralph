@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
-
-import pytest
 
 from ralph.models import (
     ImplementationPlan,
@@ -655,9 +652,10 @@ class TestMemoryCleanup:
 
     def test_cleanup_archive_deletes_old_files(self, tmp_path: Path) -> None:
         """cleanup_archive deletes files older than threshold."""
-        from ralph.memory import MemoryConfig, MemoryManager
         import os
         import time
+
+        from ralph.memory import MemoryConfig, MemoryManager
 
         config = MemoryConfig(archive_after_days=0)  # Delete immediately for test
         manager = MemoryManager(tmp_path, config=config)

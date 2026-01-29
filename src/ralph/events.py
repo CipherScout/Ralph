@@ -123,6 +123,10 @@ class StreamEvent:
     iteration: int | None = None
     session_id: str | None = None
 
+    # Token usage and cost fields
+    token_usage: int | None = None
+    cost_usd: float | None = None
+
     def to_dict(self) -> dict[str, Any]:
         """Convert event to dictionary for serialization."""
         result: dict[str, Any] = {
@@ -156,6 +160,10 @@ class StreamEvent:
             result["iteration"] = self.iteration
         if self.session_id is not None:
             result["session_id"] = self.session_id
+        if self.token_usage is not None:
+            result["token_usage"] = self.token_usage
+        if self.cost_usd is not None:
+            result["cost_usd"] = self.cost_usd
 
         return result
 
@@ -181,6 +189,8 @@ class StreamEvent:
             phase=data.get("phase"),
             iteration=data.get("iteration"),
             session_id=data.get("session_id"),
+            token_usage=data.get("token_usage"),
+            cost_usd=data.get("cost_usd"),
         )
 
 
@@ -218,6 +228,8 @@ def iteration_end_event(
         type=StreamEventType.ITERATION_END,
         iteration=iteration,
         phase=phase,
+        token_usage=tokens_used,
+        cost_usd=cost_usd,
         data={
             "success": success,
             "tokens_used": tokens_used,

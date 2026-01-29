@@ -175,3 +175,67 @@ class TestErrorEvents:
         event = info_event("Just FYI")
         assert event.type == StreamEventType.INFO
         assert event.data["message"] == "Just FYI"
+
+
+class TestStreamEventSerialization:
+    """Tests for StreamEvent serialization with token usage and cost data."""
+
+    def test_iteration_end_event_with_token_fields(self) -> None:
+        """iteration_end_event includes token_usage and cost_usd fields."""
+        event = iteration_end_event(
+            iteration=3,
+            phase="building",
+            success=True,
+            tokens_used=2500,
+            cost_usd=0.0375,
+        )
+        assert event.type == StreamEventType.ITERATION_END
+        assert event.iteration == 3
+        assert event.phase == "building"
+        assert hasattr(event, "token_usage")
+        assert hasattr(event, "cost_usd")
+        assert event.token_usage == 2500
+        assert event.cost_usd == 0.0375
+
+    def test_stream_event_serialization_with_tokens(self) -> None:
+        """StreamEvent.to_dict() includes token_usage and cost_usd."""
+        event = iteration_end_event(
+            iteration=1,
+            phase="discovery",
+            success=True,
+            tokens_used=1200,
+            cost_usd=0.018,
+        )
+        data = event.to_dict()
+        assert "token_usage" in data
+        assert "cost_usd" in data
+        assert data["token_usage"] == 1200
+        assert data["cost_usd"] == 0.018
+
+    def test_stream_event_deserialization_with_tokens(self) -> None:
+        """StreamEvent.from_dict() restores token_usage and cost_usd."""
+        original_event = iteration_end_event(
+            iteration=2,
+            phase="planning",
+            success=False,
+            tokens_used=800,
+            cost_usd=0.012,
+        )
+        serialized = original_event.to_dict()
+        restored_event = StreamEvent.from_dict(serialized)
+
+        assert restored_event.token_usage == 800
+        assert restored_event.cost_usd == 0.012
+        assert restored_event.iteration == 2
+        assert restored_event.phase == "planning"
+
+    def test_stream_event_serialization_without_token_data(self) -> None:
+        """Events without token data serialize properly (None values excluded)."""
+        event = text_delta_event("Hello")
+        data = event.to_dict()
+
+        # Fields should not be present if None
+        assert "token_usage" not in data
+        assert "cost_usd" not in data
+        assert "text" in data
+        assert data["text"] == "Hello"

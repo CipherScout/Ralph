@@ -125,12 +125,22 @@ class RalphLiveDisplay:
             self._start_spinner()
 
         elif event.type == StreamEventType.ITERATION_END:
-            # Stop the spinner before showing results
+            data = event.data or {}
+            try:
+                tokens = int(data.get("tokens_used", 0) or 0)
+            except (TypeError, ValueError):
+                tokens = 0
+            try:
+                cost = float(data.get("cost_usd", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                cost = 0.0
+
+            # Update spinner with token/cost data before stopping it
+            self._update_spinner(tokens=tokens, cost=cost)
+
+            # Stop the spinner after showing final token count
             self._stop_spinner()
 
-            data = event.data or {}
-            tokens = data.get("tokens_used", 0)
-            cost = data.get("cost_usd", 0.0)
             self._total_tokens += tokens
             self._total_cost += cost
 

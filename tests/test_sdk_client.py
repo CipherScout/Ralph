@@ -1266,3 +1266,191 @@ class TestCostTracking:
         assert output_tokens == 500
 
 
+class TestTokenUsageInEvents:
+    """Tests for token usage emission in ITERATION_END events."""
+
+    @patch("ralph.sdk_client._get_ralph_hooks")
+    @patch("ralph.sdk_client._get_mcp_server")
+    @pytest.mark.asyncio
+    async def test_stream_iteration_emits_token_usage_from_result_message(
+        self, mock_mcp: MagicMock, mock_hooks: MagicMock
+    ) -> None:
+        """stream_iteration emits ITERATION_END event with token usage from ResultMessage."""
+        from claude_agent_sdk import ResultMessage
+
+        from ralph.events import StreamEventType
+
+        mock_hooks.return_value = {"PreToolUse": []}
+        mock_mcp.return_value = None
+
+        state = create_mock_state()
+        client = RalphSDKClient(state=state)
+        client.mcp_servers = {}
+
+        # Mock SDK client to yield a ResultMessage with usage data
+        mock_result_msg = MagicMock(spec=ResultMessage)
+        mock_result_msg.usage = {
+            "input_tokens": 1000,
+            "output_tokens": 500,
+            "cache_read_input_tokens": 100,
+        }
+        mock_result_msg.total_cost_usd = None  # Test cost calculation
+
+        async def mock_receive():
+            yield mock_result_msg
+
+        # Create proper async context manager mock
+        class MockSDKClient:
+            async def query(self, prompt):
+                pass
+
+            def receive_response(self):
+                return mock_receive()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                pass
+
+        mock_sdk_client = MockSDKClient()
+
+        events = []
+        with patch("ralph.sdk_client.ClaudeSDKClient", return_value=mock_sdk_client):
+            async for event in client.stream_iteration("test prompt"):
+                events.append(event)
+
+        # Should have ITERATION_START and ITERATION_END events
+        assert len(events) >= 2
+
+        # Find ITERATION_END event
+        iteration_end_events = [e for e in events if e.type == StreamEventType.ITERATION_END]
+        assert len(iteration_end_events) == 1
+
+        end_event = iteration_end_events[0]
+
+        # Verify token usage is included
+        # 1000 input + 500 output + 100 cache_read = 1600 total
+        assert end_event.token_usage == 1600
+        assert end_event.cost_usd > 0  # Should calculate cost since SDK didn't provide it
+
+        # Verify event data includes the details
+        assert end_event.data["tokens_used"] == 1600
+        assert end_event.data["cost_usd"] > 0
+
+    @patch("ralph.sdk_client._get_ralph_hooks")
+    @patch("ralph.sdk_client._get_mcp_server")
+    @pytest.mark.asyncio
+    async def test_stream_iteration_handles_missing_usage_gracefully(
+        self, mock_mcp: MagicMock, mock_hooks: MagicMock
+    ) -> None:
+        """stream_iteration handles missing usage data gracefully."""
+        from claude_agent_sdk import ResultMessage
+
+        from ralph.events import StreamEventType
+
+        mock_hooks.return_value = {"PreToolUse": []}
+        mock_mcp.return_value = None
+
+        state = create_mock_state()
+        client = RalphSDKClient(state=state)
+        client.mcp_servers = {}
+
+        # Mock SDK client to yield a ResultMessage without usage data
+        mock_result_msg = MagicMock(spec=ResultMessage)
+        mock_result_msg.usage = None
+        mock_result_msg.total_cost_usd = None
+
+        async def mock_receive():
+            yield mock_result_msg
+
+        # Create proper async context manager mock
+        class MockSDKClient:
+            async def query(self, prompt):
+                pass
+
+            def receive_response(self):
+                return mock_receive()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                pass
+
+        mock_sdk_client = MockSDKClient()
+
+        events = []
+        with patch("ralph.sdk_client.ClaudeSDKClient", return_value=mock_sdk_client):
+            async for event in client.stream_iteration("test prompt"):
+                events.append(event)
+
+        # Should still have ITERATION_END event with zero values
+        iteration_end_events = [e for e in events if e.type == StreamEventType.ITERATION_END]
+        assert len(iteration_end_events) == 1
+
+        end_event = iteration_end_events[0]
+        assert end_event.token_usage == 0
+        assert end_event.cost_usd == 0.0
+
+    @patch("ralph.sdk_client._get_ralph_hooks")
+    @patch("ralph.sdk_client._get_mcp_server")
+    @pytest.mark.asyncio
+    async def test_stream_iteration_uses_sdk_provided_cost(
+        self, mock_mcp: MagicMock, mock_hooks: MagicMock
+    ) -> None:
+        """stream_iteration uses SDK-provided cost when available."""
+        from claude_agent_sdk import ResultMessage
+
+        from ralph.events import StreamEventType
+
+        mock_hooks.return_value = {"PreToolUse": []}
+        mock_mcp.return_value = None
+
+        state = create_mock_state()
+        client = RalphSDKClient(state=state)
+        client.mcp_servers = {}
+
+        # Mock SDK client with cost provided
+        mock_result_msg = MagicMock(spec=ResultMessage)
+        mock_result_msg.usage = {
+            "input_tokens": 1000,
+            "output_tokens": 500,
+        }
+        mock_result_msg.total_cost_usd = 0.0234  # SDK-provided cost
+
+        async def mock_receive():
+            yield mock_result_msg
+
+        # Create proper async context manager mock
+        class MockSDKClient:
+            async def query(self, prompt):
+                pass
+
+            def receive_response(self):
+                return mock_receive()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                pass
+
+        mock_sdk_client = MockSDKClient()
+
+        events = []
+        with patch("ralph.sdk_client.ClaudeSDKClient", return_value=mock_sdk_client):
+            async for event in client.stream_iteration("test prompt"):
+                events.append(event)
+
+        # Find ITERATION_END event
+        iteration_end_events = [e for e in events if e.type == StreamEventType.ITERATION_END]
+        assert len(iteration_end_events) == 1
+
+        end_event = iteration_end_events[0]
+
+        # Should use SDK-provided cost
+        assert end_event.cost_usd == 0.0234
+        assert end_event.data["cost_usd"] == 0.0234
+
+
