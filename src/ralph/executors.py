@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ralph.config import RalphConfig, load_config
 from ralph.events import (
@@ -31,9 +31,6 @@ from ralph.sdk_client import (
     UserInputCallbacks,
     create_ralph_client,
 )
-
-if TYPE_CHECKING:
-    pass
 
 
 @dataclass

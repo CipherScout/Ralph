@@ -17,7 +17,6 @@ from ralph.context import (
     load_injections,
     load_memory_file,
     load_session_history,
-    should_trigger_handoff,
     write_memory_file,
 )
 from ralph.models import ImplementationPlan, Phase, RalphState, Task, TaskStatus
@@ -359,18 +358,6 @@ class TestExecuteContextHandoff:
         memory_content = result.memory_path.read_text()
         assert "Great session!" in memory_content
         assert "file1.py" in memory_content
-
-
-class TestShouldTriggerHandoff:
-    """Tests for should_trigger_handoff - always returns False now."""
-
-    def test_never_triggers(self, project_path: Path) -> None:
-        """Never triggers handoff (context budget tracking removed)."""
-        state = RalphState(project_root=project_path)
-
-        should_trigger, reason = should_trigger_handoff(state)
-        assert should_trigger is False
-        assert reason is None
 
 
 class TestContextInjection:

@@ -544,20 +544,6 @@ def execute_context_handoff(
         )
 
 
-def should_trigger_handoff(state: RalphState) -> tuple[bool, str | None]:
-    """Check if a context hand-off should be triggered.
-
-    Context budget tracking has been removed - handoffs are no longer triggered automatically.
-
-    Args:
-        state: Current Ralph state
-
-    Returns:
-        Tuple of (should_handoff, reason) - always (False, None)
-    """
-    return False, None
-
-
 async def generate_llm_session_summary(
     state: RalphState,
     plan: ImplementationPlan,

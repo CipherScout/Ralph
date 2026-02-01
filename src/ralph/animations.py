@@ -19,11 +19,6 @@ from rich.text import Text
 # Claude Code style braille spinner frames (fixed-width for smooth animation)
 BRAILLE_SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
-# Alternative spinners
-DOTS_SPINNER = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]
-MOON_SPINNER = ["🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘"]
-ARROW_SPINNER = ["←", "↖", "↑", "↗", "→", "↘", "↓", "↙"]
-
 # Thinking verbs (like Claude Code uses)
 THINKING_VERBS: list[str] = [
     "Thinking",
@@ -155,27 +150,6 @@ def get_random_thinking_verb() -> str:
 def get_random_fact() -> str:
     """Get a random coding fact."""
     return random.choice(CODING_FACTS)
-
-
-def get_tool_category(tool_name: str | None) -> str:
-    """Map a tool name to a patience phrase category."""
-    if not tool_name:
-        return "thinking"
-
-    tool_categories: dict[str, str] = {
-        "Read": "reading",
-        "Glob": "reading",
-        "Grep": "reading",
-        "Write": "writing",
-        "Edit": "writing",
-        "Bash": "testing",
-        "Task": "thinking",
-        "WebSearch": "discovery",
-        "WebFetch": "reading",
-        "AskUserQuestion": "discovery",
-    }
-
-    return tool_categories.get(tool_name, "thinking")
 
 
 def format_token_count(tokens: int) -> str:
@@ -419,36 +393,3 @@ class PhaseAnimation:
         phase_lower = phase.lower()
         art = self.PHASE_ART.get(phase_lower, f"[bold]{phase} Phase[/bold]")
         self.console.print(art)
-
-
-# Legacy compatibility - PatienceDisplay wraps ThinkingSpinner
-class PatienceDisplay:
-    """Display patience phrases with animated spinners.
-
-    This is a compatibility wrapper around ThinkingSpinner.
-    """
-
-    def __init__(self, console: Console) -> None:
-        """Initialize the patience display."""
-        self.console = console
-        self._spinner: ThinkingSpinner | None = None
-
-    def start(self, category: str = "thinking") -> None:
-        """Start showing an animated patience display."""
-        self._spinner = ThinkingSpinner(self.console, show_tips=True)
-        self._spinner._tip = get_random_phrase(category)
-        self._spinner.start()
-
-    def update(self, category: str = "thinking", custom_message: str | None = None) -> None:
-        """Update the patience display with a new phrase."""
-        if self._spinner:
-            if custom_message:
-                self._spinner.update(message=custom_message)
-            else:
-                self._spinner.update(message=get_random_phrase(category))
-
-    def stop(self) -> None:
-        """Stop the patience display."""
-        if self._spinner:
-            self._spinner.stop()
-            self._spinner = None

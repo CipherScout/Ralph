@@ -7,13 +7,11 @@ import yaml
 
 from ralph.config import (
     BuildConfig,
-    CostController,
     CostLimits,
     PhaseConfig,
     ProjectConfig,
     RalphConfig,
     SafetyConfig,
-    create_cost_controller,
     create_default_config,
     load_config,
     save_config,
@@ -52,8 +50,6 @@ class TestRalphConfig:
         """Phase configs have correct defaults."""
         config = RalphConfig()
 
-        assert config.discovery.human_in_loop is True
-        assert config.planning.dependency_analysis is True
         assert config.building.max_iterations == 100
         assert config.validation.require_human_approval is True
 
@@ -105,10 +101,6 @@ class TestLoadConfig:
         """Loads phase-specific configurations."""
         config_data = {
             "phases": {
-                "discovery": {
-                    "human_in_loop": False,
-                    "max_questions": 20,
-                },
                 "building": {
                     "max_iterations": 50,
                     "backpressure": ["pytest", "mypy"],
@@ -122,8 +114,6 @@ class TestLoadConfig:
 
         config = load_config(project_path)
 
-        assert config.discovery.human_in_loop is False
-        assert config.discovery.max_questions == 20
         assert config.building.max_iterations == 50
         assert config.building.backpressure == ["pytest", "mypy"]
 
@@ -236,114 +226,6 @@ class TestCostLimits:
         assert limits.total == 100.0
 
 
-class TestCostController:
-    """Tests for CostController."""
-
-    def test_tracks_costs(self) -> None:
-        """Tracks costs across all levels."""
-        controller = CostController(limits=CostLimits())
-        controller.add_cost(1.0)
-
-        assert controller.iteration_cost == 1.0
-        assert controller.session_cost == 1.0
-        assert controller.total_cost == 1.0
-
-    def test_start_new_iteration(self) -> None:
-        """Resets iteration cost only."""
-        controller = CostController(limits=CostLimits())
-        controller.add_cost(1.0)
-        controller.start_new_iteration()
-
-        assert controller.iteration_cost == 0.0
-        assert controller.session_cost == 1.0
-        assert controller.total_cost == 1.0
-
-    def test_start_new_session(self) -> None:
-        """Resets session and iteration costs."""
-        controller = CostController(limits=CostLimits())
-        controller.add_cost(1.0)
-        controller.start_new_session()
-
-        assert controller.iteration_cost == 0.0
-        assert controller.session_cost == 0.0
-        assert controller.total_cost == 1.0
-
-    def test_check_limits_within(self) -> None:
-        """Returns True when within limits."""
-        controller = CostController(limits=CostLimits())
-        controller.add_cost(1.0)
-
-        within, reason = controller.check_limits()
-        assert within is True
-        assert reason is None
-
-    def test_check_limits_iteration_exceeded(self) -> None:
-        """Detects iteration limit exceeded."""
-        controller = CostController(limits=CostLimits(per_iteration=1.0))
-        controller.add_cost(1.5)
-
-        within, reason = controller.check_limits()
-        assert within is False
-        assert "iteration_cost_exceeded" in reason
-
-    def test_check_limits_session_exceeded(self) -> None:
-        """Detects session limit exceeded."""
-        # Set high iteration limit so session limit is hit first
-        controller = CostController(limits=CostLimits(per_iteration=10.0, per_session=2.0))
-        controller.add_cost(2.5)
-
-        within, reason = controller.check_limits()
-        assert within is False
-        assert "session_cost_exceeded" in reason
-
-    def test_check_limits_total_exceeded(self) -> None:
-        """Detects total limit exceeded."""
-        # Set high iteration/session limits so total limit is hit first
-        limits = CostLimits(per_iteration=100.0, per_session=100.0, total=5.0)
-        controller = CostController(limits=limits)
-        controller.add_cost(6.0)
-
-        within, reason = controller.check_limits()
-        assert within is False
-        assert "total_cost_exceeded" in reason
-
-    def test_get_remaining_budget(self) -> None:
-        """Returns remaining budget."""
-        controller = CostController(
-            limits=CostLimits(per_iteration=2.0, per_session=10.0, total=100.0)
-        )
-        controller.add_cost(1.0)
-
-        remaining = controller.get_remaining_budget()
-
-        assert remaining["iteration"] == 1.0
-        assert remaining["session"] == 9.0
-        assert remaining["total"] == 99.0
-
-    def test_remaining_budget_not_negative(self) -> None:
-        """Remaining budget doesn't go negative."""
-        controller = CostController(limits=CostLimits(per_iteration=1.0))
-        controller.add_cost(5.0)
-
-        remaining = controller.get_remaining_budget()
-        assert remaining["iteration"] == 0.0
-
-
-class TestCreateCostController:
-    """Tests for create_cost_controller."""
-
-    def test_creates_from_config(self) -> None:
-        """Creates controller from config."""
-        config = RalphConfig()
-        config.cost_limits = CostLimits(per_iteration=5.0, per_session=100.0, total=500.0)
-
-        controller = create_cost_controller(config)
-
-        assert controller.limits.per_iteration == 5.0
-        assert controller.limits.per_session == 100.0
-        assert controller.limits.total == 500.0
-
-
 class TestBuildConfig:
     """Tests for BuildConfig."""
 
@@ -364,6 +246,5 @@ class TestPhaseConfig:
         """Has sensible defaults."""
         config = PhaseConfig()
 
-        assert config.human_in_loop is False
         assert config.max_iterations == 100
         assert config.backpressure == []

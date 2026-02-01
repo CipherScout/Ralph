@@ -30,10 +30,7 @@ class CostLimits:
 class PhaseConfig:
     """Configuration for a specific phase."""
 
-    human_in_loop: bool = False
-    max_questions: int = 10
     task_size_tokens: int = 30_000
-    dependency_analysis: bool = True
     max_iterations: int = 100
     require_human_approval: bool = False
     backpressure: list[str] = field(default_factory=list)
@@ -45,8 +42,6 @@ class SafetyConfig:
 
     sandbox_enabled: bool = True
     blocked_commands: list[str] = field(default_factory=list)
-    git_read_only: bool = True
-    allowed_git_operations: list[str] = field(default_factory=list)
     max_retries: int = 3
 
 
@@ -84,13 +79,9 @@ class RalphConfig:
     cost_limits: CostLimits = field(default_factory=CostLimits)
 
     # Phase-specific configs
-    discovery: PhaseConfig = field(default_factory=lambda: PhaseConfig(
-        human_in_loop=True,
-        max_questions=10,
-    ))
+    discovery: PhaseConfig = field(default_factory=PhaseConfig)
     planning: PhaseConfig = field(default_factory=lambda: PhaseConfig(
         task_size_tokens=30_000,
-        dependency_analysis=True,
     ))
     building: PhaseConfig = field(default_factory=lambda: PhaseConfig(
         max_iterations=100,
@@ -106,17 +97,12 @@ class RalphConfig:
 
     # Runtime settings
     max_iterations: int = 100
-    circuit_breaker_failures: int = 3
-    circuit_breaker_stagnation: int = 5
 
 
 def _parse_phase_config(data: dict[str, Any]) -> PhaseConfig:
     """Parse phase configuration from dict."""
     return PhaseConfig(
-        human_in_loop=data.get("human_in_loop", False),
-        max_questions=data.get("max_questions", 10),
         task_size_tokens=data.get("task_size_tokens", 30_000),
-        dependency_analysis=data.get("dependency_analysis", True),
         max_iterations=data.get("max_iterations", 100),
         require_human_approval=data.get("require_human_approval", False),
         backpressure=data.get("backpressure", []),
@@ -170,8 +156,6 @@ def load_config(project_root: Path) -> RalphConfig:
                 config.safety = SafetyConfig(
                     sandbox_enabled=safety.get("sandbox_enabled", True),
                     blocked_commands=safety.get("blocked_commands", []),
-                    git_read_only=safety.get("git_read_only", True),
-                    allowed_git_operations=safety.get("allowed_git_operations", []),
                 )
                 if "cost_limits" in safety:
                     limits = safety["cost_limits"]
@@ -222,10 +206,6 @@ def _apply_env_overrides(config: RalphConfig) -> RalphConfig:
         config.max_iterations = int(env_val)
     if env_val := os.environ.get("RALPH_MAX_COST_USD"):
         config.cost_limits.total = float(env_val)
-    if env_val := os.environ.get("RALPH_CIRCUIT_BREAKER_FAILURES"):
-        config.circuit_breaker_failures = int(env_val)
-    if env_val := os.environ.get("RALPH_CIRCUIT_BREAKER_STAGNATION"):
-        config.circuit_breaker_stagnation = int(env_val)
 
     return config
 
@@ -256,13 +236,8 @@ def save_config(config: RalphConfig, project_root: Path) -> Path:
             "typecheck_command": config.build.typecheck_command,
         },
         "phases": {
-            "discovery": {
-                "human_in_loop": config.discovery.human_in_loop,
-                "max_questions": config.discovery.max_questions,
-            },
             "planning": {
                 "task_size_tokens": config.planning.task_size_tokens,
-                "dependency_analysis": config.planning.dependency_analysis,
             },
             "building": {
                 "max_iterations": config.building.max_iterations,
@@ -318,73 +293,5 @@ def create_default_config(project_root: Path, project_name: str = "") -> RalphCo
         "python -m venv",
     ]
 
-    config.safety.allowed_git_operations = [
-        "status",
-        "log",
-        "diff",
-    ]
-
     save_config(config, project_root)
     return config
-
-
-@dataclass
-class CostController:
-    """Controller for enforcing cost limits.
-
-    Tracks costs and determines when limits are exceeded.
-    """
-
-    limits: CostLimits
-    iteration_cost: float = 0.0
-    session_cost: float = 0.0
-    total_cost: float = 0.0
-
-    def add_cost(self, cost: float) -> None:
-        """Add cost to all trackers."""
-        self.iteration_cost += cost
-        self.session_cost += cost
-        self.total_cost += cost
-
-    def start_new_iteration(self) -> None:
-        """Reset iteration cost tracker."""
-        self.iteration_cost = 0.0
-
-    def start_new_session(self) -> None:
-        """Reset session cost tracker."""
-        self.session_cost = 0.0
-        self.iteration_cost = 0.0
-
-    def check_limits(self) -> tuple[bool, str | None]:
-        """Check if any cost limit is exceeded.
-
-        Returns:
-            Tuple of (within_limits, violation_reason)
-        """
-        if self.iteration_cost > self.limits.per_iteration:
-            return False, f"iteration_cost_exceeded:${self.iteration_cost:.2f}"
-        if self.session_cost > self.limits.per_session:
-            return False, f"session_cost_exceeded:${self.session_cost:.2f}"
-        if self.total_cost > self.limits.total:
-            return False, f"total_cost_exceeded:${self.total_cost:.2f}"
-        return True, None
-
-    def get_remaining_budget(self) -> dict[str, float]:
-        """Get remaining budget for each limit."""
-        return {
-            "iteration": max(0, self.limits.per_iteration - self.iteration_cost),
-            "session": max(0, self.limits.per_session - self.session_cost),
-            "total": max(0, self.limits.total - self.total_cost),
-        }
-
-
-def create_cost_controller(config: RalphConfig) -> CostController:
-    """Create a cost controller from config.
-
-    Args:
-        config: Ralph configuration
-
-    Returns:
-        Configured CostController
-    """
-    return CostController(limits=config.cost_limits)

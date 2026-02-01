@@ -12,7 +12,6 @@ from ralph.persistence import (
     save_plan,
 )
 from ralph.tools import (
-    TOOL_DEFINITIONS,
     RalphTools,
     ToolResult,
     create_tools,
@@ -355,33 +354,6 @@ class TestAddTask:
         plan = load_plan(project_path)
         task = plan.get_task_by_id("task-4")
         assert task.dependencies == ["task-1"]
-
-
-class TestToolDefinitions:
-    """Tests for tool definitions."""
-
-    def test_all_tools_defined(self) -> None:
-        """All tools have definitions."""
-        tool_names = [t["name"] for t in TOOL_DEFINITIONS]
-        expected = [
-            "ralph_get_next_task",
-            "ralph_mark_task_complete",
-            "ralph_mark_task_blocked",
-            "ralph_get_plan_summary",
-            "ralph_get_state_summary",
-            "ralph_add_task",
-        ]
-        for name in expected:
-            assert name in tool_names, f"Missing tool definition: {name}"
-
-    def test_definitions_have_required_fields(self) -> None:
-        """Tool definitions have required fields."""
-        for tool in TOOL_DEFINITIONS:
-            assert "name" in tool
-            assert "description" in tool
-            assert "input_schema" in tool
-            assert "properties" in tool["input_schema"]
-            assert "required" in tool["input_schema"]
 
 
 class TestCreateTools:

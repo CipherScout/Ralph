@@ -10,16 +10,13 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ralph.config import RalphConfig, load_config
 from ralph.models import Phase, Task
 from ralph.persistence import load_plan, load_state, save_state
 from ralph.phases import get_phase_prompt
 from ralph.sdk_client import IterationResult, create_ralph_client
-
-if TYPE_CHECKING:
-    pass
 
 
 @dataclass

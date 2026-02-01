@@ -1,13 +1,13 @@
 """Tests for spinner animations and thread safety.
 
-These tests verify the ThinkingSpinner and PatienceDisplay classes work
-correctly through multiple start/stop cycles without race conditions.
+These tests verify the ThinkingSpinner class works correctly through
+multiple start/stop cycles without race conditions.
 
 This module now includes comprehensive tests for the token display feature
 as part of SPEC-002-realtime-token-display:
 
 Test categories:
-- Basic spinner lifecycle (start/stop cycles)  
+- Basic spinner lifecycle (start/stop cycles)
 - Thread safety and race condition prevention
 - Token display rendering with various counts
 - Spinner formatting and precision
@@ -38,11 +38,9 @@ import pytest
 from rich.console import Console
 
 from ralph.animations import (
-    PatienceDisplay,
     ThinkingSpinner,
     get_random_phrase,
     get_random_thinking_verb,
-    get_tool_category,
 )
 
 
@@ -173,41 +171,6 @@ class TestThinkingSpinner:
         assert text is not None
 
 
-class TestPatienceDisplay:
-    """Tests for PatienceDisplay wrapper class."""
-
-    def test_patience_display_start_stop(self, console: Console) -> None:
-        """PatienceDisplay can be started and stopped."""
-        display = PatienceDisplay(console)
-
-        display.start("thinking")
-        assert display._spinner is not None
-
-        display.stop()
-        assert display._spinner is None
-
-    def test_patience_display_multiple_cycles(self, console: Console) -> None:
-        """PatienceDisplay works through multiple cycles."""
-        display = PatienceDisplay(console)
-
-        for _ in range(3):
-            display.start("thinking")
-            display.update("reading")
-            display.stop()
-            assert display._spinner is None
-
-    def test_patience_display_update(self, console: Console) -> None:
-        """PatienceDisplay update works correctly."""
-        display = PatienceDisplay(console)
-
-        display.start("thinking")
-        try:
-            display.update("reading")
-            display.update("writing", custom_message="Custom message")
-        finally:
-            display.stop()
-
-
 class TestHelperFunctions:
     """Tests for helper functions in animations module."""
 
@@ -226,15 +189,6 @@ class TestHelperFunctions:
         verb = get_random_thinking_verb()
         assert isinstance(verb, str)
         assert len(verb) > 0
-
-    def test_get_tool_category(self) -> None:
-        """get_tool_category maps tools correctly."""
-        assert get_tool_category("Read") == "reading"
-        assert get_tool_category("Write") == "writing"
-        assert get_tool_category("Bash") == "testing"
-        assert get_tool_category("unknown_tool") == "thinking"
-        assert get_tool_category(None) == "thinking"
-
 
 class TestSpinnerTokenRendering:
     """Comprehensive tests for spinner rendering with various token counts."""

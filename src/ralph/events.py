@@ -36,8 +36,6 @@ class StreamEventType(str, Enum):
 
     # LLM output events
     TEXT_DELTA = "text_delta"  # Streaming text chunk
-    TEXT_COMPLETE = "text_complete"  # Full text block complete
-    THINKING = "thinking"  # Extended thinking content (if exposed)
 
     # Tool events
     TOOL_USE_START = "tool_use_start"  # Tool invocation begins
@@ -46,19 +44,14 @@ class StreamEventType(str, Enum):
 
     # User interaction events (critical for discovery phase)
     NEEDS_INPUT = "needs_input"  # AskUserQuestion tool called
-    INPUT_RECEIVED = "input_received"  # User provided input
 
     # Task events
-    TASK_START = "task_start"  # Starting work on a task
     TASK_COMPLETE = "task_complete"  # Task marked complete
     TASK_BLOCKED = "task_blocked"  # Task blocked
-    TASK_PROGRESS = "task_progress"  # Progress update on current task
 
     # Context events
     HANDOFF_START = "handoff_start"  # Context handoff starting
     HANDOFF_COMPLETE = "handoff_complete"  # Handoff finished
-    SESSION_START = "session_start"  # New session started
-    SESSION_END = "session_end"  # Session ended
 
     # Error events
     ERROR = "error"
