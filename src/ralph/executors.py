@@ -460,6 +460,36 @@ class DiscoveryExecutor(PhaseExecutor):
     def phase(self) -> Phase:
         return Phase.DISCOVERY
 
+    def _build_executive_summary(self) -> str:
+        """Build compact summary of discovery outputs for planning phase.
+
+        Extracts key info from PRD and SPEC files to provide richer
+        context at the Discovery → Planning transition.
+        """
+        parts: list[str] = []
+        specs_dir = self.project_root / "specs"
+
+        # Extract PRD highlights
+        prd_path = specs_dir / "PRD.md"
+        if prd_path.exists():
+            with contextlib.suppress(Exception):
+                prd_content = prd_path.read_text()[:2000]
+                parts.append(f"### PRD Highlights\n{prd_content}")
+
+        # List SPEC titles and first lines
+        if specs_dir.exists():
+            spec_summaries: list[str] = []
+            for spec in sorted(specs_dir.glob("SPEC-*.md")):
+                with contextlib.suppress(Exception):
+                    first_lines = spec.read_text()[:300]
+                    title = first_lines.split("\n")[0]
+                    spec_summaries.append(f"- {spec.name}: {title}")
+            if spec_summaries:
+                parts.append("### Spec Files\n" + "\n".join(spec_summaries))
+
+        summary = "\n".join(parts)
+        return summary[:3000]
+
     def _build_continuation_prompt(self, iteration: int) -> str:
         """Build a context-aware continuation prompt for iteration > 0.
 
@@ -533,11 +563,12 @@ You are continuing the DISCOVERY phase. Here is the context from previous iterat
 5. **Validate**: Call ralph_validate_discovery_outputs to verify all documents exist
 6. **Signal Completion**: Only when all 3 document types exist, call ralph_signal_discovery_complete
 
-**IMPORTANT**:
-- Do NOT re-ask questions that were already answered
-- Do NOT re-create specs that already exist
-- PRD.md must reference all SPEC files in a JTBD table
-- SPEC files must follow the SPEC-NNN-slug.md naming pattern
+### Rules Reminder
+- Git is READ-ONLY (no commit, push, merge, rebase)
+- Use `WebSearch`/`WebFetch` when researching similar solutions or best practices
+- Use `mcp__ralph__ralph_update_memory` to persist important context
+- Do NOT re-read files you've already read this session
+- Do NOT re-ask questions already answered (check Session Memory)
 """
         return prompt
 
@@ -669,6 +700,7 @@ Start by asking the user what they want to build."""
                 "architecture_created": arch_exists,
                 "spec_files": spec_files,
                 "validation": validation_result,
+                "executive_summary": self._build_executive_summary(),
             }
             self._capture_phase_transition_memory(
                 old_phase=Phase.DISCOVERY,
@@ -849,6 +881,7 @@ Start by asking the user what they want to build."""
                     "prd_exists": prd_exists,
                     "architecture_exists": arch_exists,
                     "spec_files": spec_files,
+                    "executive_summary": self._build_executive_summary(),
                 },
             )
 
@@ -880,6 +913,23 @@ class PlanningExecutor(PhaseExecutor):
     @property
     def phase(self) -> Phase:
         return Phase.PLANNING
+
+    def _build_task_overview(self) -> str:
+        """Build compact overview of all planned tasks for building phase."""
+        self._plan = None  # Force reload
+        lines: list[str] = []
+        for t in self.plan.tasks:
+            deps = f" (depends: {', '.join(t.dependencies)})" if t.dependencies else ""
+            lines.append(f"- [{t.id}] P{t.priority}: {t.description[:80]}{deps}")
+        return "\n".join(lines)[:2000]
+
+    def _read_architecture_highlights(self) -> str:
+        """Extract key architecture decisions for handoff to building phase."""
+        arch_path = self.project_root / "specs" / "TECHNICAL_ARCHITECTURE.md"
+        if arch_path.exists():
+            with contextlib.suppress(Exception):
+                return arch_path.read_text()[:2000]
+        return ""
 
     def _build_continuation_prompt(self, iteration: int) -> str:
         """Build a context-aware continuation prompt for iteration > 0."""
@@ -919,7 +969,11 @@ You are continuing the PLANNING phase. Here is the context:
 3. **Create Tasks**: Use ralph_add_task for any remaining work
 4. **Signal Completion**: When plan is complete, call ralph_signal_planning_complete
 
-**IMPORTANT**:
+### Rules Reminder
+- No implementation code — planning documents and task definitions ONLY
+- Git is READ-ONLY (no commit, push, merge, rebase)
+- Use `WebSearch`/`WebFetch` when researching patterns or library compatibility
+- Use `mcp__ralph__ralph_update_memory` to persist important context
 - Do NOT create duplicate tasks
 - Tasks should be sized for ~30 minutes of work each
 - Set dependencies between related tasks
@@ -1019,10 +1073,15 @@ Start by reading the specs and analyzing the codebase."""
                 )
 
             # Capture phase transition memory (harness-controlled)
+            planning_artifacts = {
+                "tasks_created": task_count,
+                "task_overview": self._build_task_overview(),
+                "architecture_highlights": self._read_architecture_highlights(),
+            }
             self._capture_phase_transition_memory(
                 old_phase=Phase.PLANNING,
                 new_phase=Phase.BUILDING,
-                artifacts={"tasks_created": task_count},
+                artifacts=planning_artifacts,
             )
 
             return PhaseExecutionResult(
@@ -1033,7 +1092,7 @@ Start by reading the specs and analyzing the codebase."""
                 tokens_used=total_tokens,
                 needs_phase_transition=True,
                 next_phase=Phase.BUILDING,
-                artifacts={"tasks_created": task_count},
+                artifacts=planning_artifacts,
                 completion_notes=f"Created {task_count} tasks in plan",
             )
 
@@ -1187,6 +1246,19 @@ class BuildingExecutor(PhaseExecutor):
     def phase(self) -> Phase:
         return Phase.BUILDING
 
+    def _build_completion_summary(self) -> str:
+        """Summarize completed tasks with notes for validation phase."""
+        self._plan = None  # Force reload
+        lines: list[str] = []
+        from ralph.models import TaskStatus
+        for t in self.plan.tasks:
+            if t.status == TaskStatus.COMPLETE:
+                notes = f" — {t.completion_notes}" if t.completion_notes else ""
+                lines.append(f"- [{t.id}] {t.description[:60]}{notes}")
+            elif t.status == TaskStatus.BLOCKED:
+                lines.append(f"- [{t.id}] BLOCKED: {t.description[:60]}")
+        return "\n".join(lines)[:2000]
+
     def _format_criteria(self, task: Task) -> str:
         """Format verification criteria for display."""
         if task.verification_criteria:
@@ -1257,7 +1329,7 @@ Instructions:
    - Write failing tests first
    - Implement the feature
    - Make tests pass
-3. Run tests with 'uv run pytest'
+3. Run tests: `{self.config.build.test_command}`
 4. When complete, call ralph_mark_task_complete with verification notes
 5. If blocked, call ralph_mark_task_blocked with reason
 
@@ -1314,7 +1386,10 @@ Start implementing now."""
                 self._capture_phase_transition_memory(
                     old_phase=Phase.BUILDING,
                     new_phase=Phase.VALIDATION,
-                    artifacts={"tasks_completed": tasks_completed},
+                    artifacts={
+                        "tasks_completed": tasks_completed,
+                        "build_summary": self._build_completion_summary(),
+                    },
                 )
 
             return PhaseExecutionResult(
@@ -1415,7 +1490,7 @@ Instructions:
    - Write failing tests first
    - Implement the feature
    - Make tests pass
-3. Run tests with 'uv run pytest'
+3. Run tests: `{self.config.build.test_command}`
 4. When complete, call ralph_mark_task_complete with verification notes
 5. If blocked, call ralph_mark_task_blocked with reason
 
@@ -1492,7 +1567,10 @@ Start implementing now."""
                 self._capture_phase_transition_memory(
                     old_phase=Phase.BUILDING,
                     new_phase=Phase.VALIDATION,
-                    artifacts={"tasks_completed": tasks_completed},
+                    artifacts={
+                        "tasks_completed": tasks_completed,
+                        "build_summary": self._build_completion_summary(),
+                    },
                 )
 
             # Yield completion info
@@ -1633,13 +1711,13 @@ class ValidationExecutor(PhaseExecutor):
         validation_results: dict[str, bool] = {}
         previous_text = ""  # Track for progress detection
 
-        prompt = """You are in the VALIDATION phase.
+        prompt = f"""You are in the VALIDATION phase.
 
 Perform comprehensive verification:
 
-1. Run all tests: uv run pytest -v
-2. Run linting: uv run ruff check .
-3. Run type checking: uv run mypy .
+1. Run all tests: `{self.config.build.test_command} -v`
+2. Run linting: `{self.config.build.lint_command}`
+3. Run type checking: `{self.config.build.typecheck_command}`
 4. Review specs/ and verify implementation matches
 5. Check for any TODO or FIXME comments that should be addressed
 
@@ -1654,7 +1732,16 @@ If everything passes, confirm validation is complete."""
             # Run validation iterations
             for i in range(max_iterations):
                 result = await self.run_iteration(
-                    prompt=prompt if i == 0 else "Continue validation. Fix any issues found.",
+                    prompt=prompt if i == 0 else (
+                        f"Continue validation. Fix any issues found.\n\n"
+                        f"### Rules Reminder\n"
+                        f"- Run commands using: `{self.config.build.tool}`\n"
+                        f"- Tests: `{self.config.build.test_command}`\n"
+                        f"- Lint: `{self.config.build.lint_command}`\n"
+                        f"- Types: `{self.config.build.typecheck_command}`\n"
+                        f"- Do NOT implement fixes — only document issues\n"
+                        f"- Git is READ-ONLY\n"
+                    ),
                     system_prompt=self.get_system_prompt(),
                 )
 
@@ -1782,13 +1869,13 @@ If everything passes, confirm validation is complete."""
         last_final_text = ""
         previous_text = ""  # Track for progress detection
 
-        prompt = """You are in the VALIDATION phase.
+        prompt = f"""You are in the VALIDATION phase.
 
 Perform comprehensive verification:
 
-1. Run all tests: uv run pytest -v
-2. Run linting: uv run ruff check .
-3. Run type checking: uv run mypy .
+1. Run all tests: `{self.config.build.test_command} -v`
+2. Run linting: `{self.config.build.lint_command}`
+3. Run type checking: `{self.config.build.typecheck_command}`
 4. Review specs/ and verify implementation matches
 5. Check for any TODO or FIXME comments that should be addressed
 

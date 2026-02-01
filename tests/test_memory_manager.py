@@ -23,7 +23,7 @@ class TestMemoryConfig:
 
         config = MemoryConfig()
 
-        assert config.max_active_memory_chars == 8000
+        assert config.max_active_memory_chars == 12000
         assert config.max_iteration_files == 20
         assert config.max_session_files == 10
         assert config.archive_after_days == 30

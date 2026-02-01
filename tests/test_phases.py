@@ -299,10 +299,10 @@ class TestBuildBuildingPrompt:
         prompt = build_building_prompt(project_path)
         assert "backpressure" in prompt.lower() or "pytest" in prompt
 
-    def test_includes_uv_rule(self, project_path: Path) -> None:
-        """Includes uv-only rule."""
+    def test_includes_build_tool_rule(self, project_path: Path) -> None:
+        """Includes build tool rule from config."""
         prompt = build_building_prompt(project_path)
-        assert "uv run" in prompt
+        assert "uv" in prompt  # Default config uses uv
 
     def test_includes_spec_files(self, project_path: Path) -> None:
         """Includes spec file references when task has spec_files."""
@@ -314,7 +314,7 @@ class TestBuildBuildingPrompt:
         )
         prompt = build_building_prompt(project_path, task=task)
 
-        assert "Spec Files (READ THESE FIRST)" in prompt
+        assert "Spec Files (READ THESE FOR REQUIREMENTS)" in prompt
         assert "specs/SPEC-001-auth.md" in prompt
         assert "specs/PRD.md" in prompt
 
@@ -328,13 +328,13 @@ class TestBuildBuildingPrompt:
         )
         prompt = build_building_prompt(project_path, task=task)
 
-        assert "Spec Files" not in prompt
+        assert "READ THESE FOR REQUIREMENTS" not in prompt
 
-    def test_includes_foundational_documents(self, project_path: Path) -> None:
-        """Includes foundational documents section."""
+    def test_includes_first_steps(self, project_path: Path) -> None:
+        """Includes first steps section with review guidance."""
         prompt = build_building_prompt(project_path)
 
-        assert "Foundational Documents" in prompt
+        assert "First Steps" in prompt
         assert "specs/PRD.md" in prompt
         assert "specs/TECHNICAL_ARCHITECTURE.md" in prompt
 
@@ -360,11 +360,11 @@ class TestBuildValidationPrompt:
         assert "PASS" in prompt
         assert "FAIL" in prompt
 
-    def test_includes_foundational_documents(self, project_path: Path) -> None:
-        """Includes foundational documents section."""
+    def test_includes_first_steps_with_documents(self, project_path: Path) -> None:
+        """Includes first steps section with document references."""
         prompt = build_validation_prompt(project_path)
 
-        assert "Foundational Documents" in prompt
+        assert "First Steps" in prompt
         assert "specs/PRD.md" in prompt
         assert "specs/TECHNICAL_ARCHITECTURE.md" in prompt
         assert "specs/SPEC-*.md" in prompt

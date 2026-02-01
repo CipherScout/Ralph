@@ -31,7 +31,7 @@ PHASE_ORDER = [Phase.DISCOVERY, Phase.PLANNING, Phase.BUILDING, Phase.VALIDATION
 class MemoryConfig:
     """Configuration for memory management."""
 
-    max_active_memory_chars: int = 8000
+    max_active_memory_chars: int = 12000
     max_iteration_files: int = 20
     max_session_files: int = 10
     max_phase_memory_chars: int = 5000
@@ -277,13 +277,13 @@ class MemoryManager:
         if prev_phase:
             prev_mem = self.load_phase_memory(prev_phase)
             if prev_mem:
-                truncated = prev_mem[:1500] if len(prev_mem) > 1500 else prev_mem
+                truncated = prev_mem[:3000] if len(prev_mem) > 3000 else prev_mem
                 sections.append(f"## From {prev_phase.value.title()} Phase\n{truncated}")
 
         # 2. Current phase context
         current_mem = self.load_phase_memory(state.current_phase)
         if current_mem:
-            truncated = current_mem[:1000] if len(current_mem) > 1000 else current_mem
+            truncated = current_mem[:1500] if len(current_mem) > 1500 else current_mem
             sections.append(f"## Current Phase ({state.current_phase.value})\n{truncated}")
 
         # 3. Recent iterations (last 3)
