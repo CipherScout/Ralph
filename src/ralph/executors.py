@@ -261,6 +261,19 @@ class PhaseExecutor(ABC):
                 artifacts=artifacts,
             )
 
+    def _sync_memory_file(self) -> None:
+        """Sync .ralph/MEMORY.md from structured memory sources.
+
+        Ensures MEMORY.md always reflects the current structured memory state,
+        regardless of whether the LLM called ralph_update_memory. This bridges
+        the gap between the harness-controlled structured memory (phases/,
+        iterations/) and the legacy MEMORY.md file.
+        """
+        with contextlib.suppress(Exception):
+            active_memory = self.memory_manager.build_active_memory(self.state, self.plan)
+            if active_memory:
+                save_memory(active_memory, self.project_root)
+
     @abstractmethod
     async def execute(self, **kwargs: Any) -> PhaseExecutionResult:
         """Execute the phase.
@@ -447,6 +460,9 @@ class PhaseExecutor(ABC):
                 task_completed=task_completed,
             )
             self._capture_iteration_memory(stream_result)
+
+            # Sync MEMORY.md from structured memory (deterministic)
+            self._sync_memory_file()
 
 
 class DiscoveryExecutor(PhaseExecutor):
@@ -707,6 +723,7 @@ Start by asking the user what they want to build."""
                 new_phase=Phase.PLANNING,
                 artifacts=artifacts,
             )
+            self._sync_memory_file()
 
             return PhaseExecutionResult(
                 success=True,
@@ -884,6 +901,7 @@ Start by asking the user what they want to build."""
                     "executive_summary": self._build_executive_summary(),
                 },
             )
+            self._sync_memory_file()
 
             # Yield completion info
             yield info_event(
@@ -1083,6 +1101,7 @@ Start by reading the specs and analyzing the codebase."""
                 new_phase=Phase.BUILDING,
                 artifacts=planning_artifacts,
             )
+            self._sync_memory_file()
 
             return PhaseExecutionResult(
                 success=True,
@@ -1216,6 +1235,7 @@ Start by reading the specs and analyzing the codebase."""
                 new_phase=Phase.BUILDING,
                 artifacts={"tasks_created": task_count},
             )
+            self._sync_memory_file()
 
             # Yield completion info
             yield info_event(
@@ -1391,6 +1411,7 @@ Start implementing now."""
                         "build_summary": self._build_completion_summary(),
                     },
                 )
+                self._sync_memory_file()
 
             return PhaseExecutionResult(
                 success=True,
@@ -1572,6 +1593,7 @@ Start implementing now."""
                         "build_summary": self._build_completion_summary(),
                     },
                 )
+                self._sync_memory_file()
 
             # Yield completion info
             yield info_event(

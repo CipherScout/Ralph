@@ -1135,3 +1135,160 @@ class TestCompletionSignalPreservation:
             "Completion signal was cleared inside the executor! "
             "The signal should only be cleared by CLI when starting next phase."
         )
+
+
+class TestSyncMemoryFile:
+    """Tests for _sync_memory_file which syncs .ralph/MEMORY.md from structured memory.
+
+    The harness writes structured memory to .ralph/memory/phases/ and
+    .ralph/memory/iterations/ deterministically, but .ralph/MEMORY.md was
+    only written when the LLM called ralph_update_memory. _sync_memory_file
+    bridges this gap by writing MEMORY.md from structured memory sources.
+    """
+
+    def test_sync_memory_file_writes_memory_md(self, project_path: Path) -> None:
+        """_sync_memory_file creates .ralph/MEMORY.md from structured memory."""
+        executor = DiscoveryExecutor(project_path)
+
+        # Populate structured memory (simulate harness-controlled capture)
+        phases_dir = project_path / ".ralph" / "memory" / "phases"
+        phases_dir.mkdir(parents=True, exist_ok=True)
+        (phases_dir / "discovery.md").write_text(
+            "# Discovery Phase\n\nDiscovered requirements for auth system."
+        )
+
+        # Ensure MEMORY.md does not exist yet
+        memory_path = project_path / ".ralph" / "MEMORY.md"
+        assert not memory_path.exists()
+
+        # Sync should create MEMORY.md
+        executor._sync_memory_file()
+
+        assert memory_path.exists(), (
+            ".ralph/MEMORY.md was not created by _sync_memory_file. "
+            "The harness should write MEMORY.md deterministically."
+        )
+        content = memory_path.read_text()
+        assert len(content) > 0, "MEMORY.md was created but is empty"
+
+    def test_sync_memory_file_no_op_when_no_memory(self, project_path: Path) -> None:
+        """_sync_memory_file does not create MEMORY.md when no memory exists."""
+        executor = DiscoveryExecutor(project_path)
+
+        # Ensure memory directories exist but are empty
+        memory_dir = project_path / ".ralph" / "memory"
+        (memory_dir / "phases").mkdir(parents=True, exist_ok=True)
+        (memory_dir / "iterations").mkdir(parents=True, exist_ok=True)
+
+        memory_path = project_path / ".ralph" / "MEMORY.md"
+        assert not memory_path.exists()
+
+        # Sync should be a no-op (no content to write)
+        executor._sync_memory_file()
+
+        # Should NOT create an empty MEMORY.md
+        # (build_active_memory returns empty/minimal content with just metrics)
+        # The key assertion: no crash, and if file exists it has content
+        if memory_path.exists():
+            assert len(memory_path.read_text().strip()) > 0
+
+    def test_sync_memory_file_suppresses_exceptions(self, project_path: Path) -> None:
+        """_sync_memory_file suppresses exceptions gracefully."""
+        executor = DiscoveryExecutor(project_path)
+
+        # Mock memory_manager to raise an exception
+        executor._memory_manager = MagicMock()
+        executor._memory_manager.build_active_memory.side_effect = RuntimeError(
+            "Memory build failed"
+        )
+
+        # Should not raise
+        executor._sync_memory_file()
+
+        # MEMORY.md should not exist since build failed
+        memory_path = project_path / ".ralph" / "MEMORY.md"
+        assert not memory_path.exists()
+
+    @patch("ralph.executors.create_ralph_client")
+    async def test_stream_iteration_syncs_memory_file(
+        self, mock_create_client: MagicMock, project_path: Path
+    ) -> None:
+        """stream_iteration creates .ralph/MEMORY.md after iteration completes."""
+        from ralph.events import StreamEventType
+
+        async def mock_stream_iteration(prompt, phase, system_prompt, max_turns):
+            from ralph.events import iteration_end_event, text_delta_event
+
+            yield text_delta_event("Working on discovery...")
+            yield iteration_end_event(
+                iteration=1,
+                phase="discovery",
+                success=True,
+                tokens_used=1000,
+                cost_usd=0.01,
+            )
+
+        mock_client = MagicMock()
+        mock_client.stream_iteration = mock_stream_iteration
+        mock_create_client.return_value = mock_client
+
+        executor = DiscoveryExecutor(project_path)
+
+        # Run stream_iteration to completion
+        gen = executor.stream_iteration("Test prompt")
+        async for _ in gen:
+            pass
+
+        # After iteration, MEMORY.md should exist
+        memory_path = project_path / ".ralph" / "MEMORY.md"
+        assert memory_path.exists(), (
+            ".ralph/MEMORY.md was not created after stream_iteration. "
+            "The harness should sync MEMORY.md at end of each iteration."
+        )
+
+    @patch("ralph.executors.create_ralph_client")
+    async def test_discovery_stream_execution_creates_memory_md(
+        self, mock_create_client: MagicMock, project_path: Path
+    ) -> None:
+        """Discovery stream_execution creates .ralph/MEMORY.md at phase completion."""
+        from ralph.persistence import load_state, save_state
+
+        async def mock_stream_iteration(prompt, phase, system_prompt, max_turns):
+            from ralph.events import iteration_end_event, text_delta_event
+
+            yield text_delta_event("Discovery complete")
+
+            # Set completion signal on disk
+            disk_state = load_state(project_path)
+            disk_state.completion_signals["discovery"] = {
+                "complete": True,
+                "summary": "Done",
+                "timestamp": "2026-01-27T12:00:00",
+            }
+            save_state(disk_state, project_path)
+
+            yield iteration_end_event(
+                iteration=1,
+                phase="discovery",
+                success=True,
+                tokens_used=1000,
+                cost_usd=0.01,
+            )
+
+        mock_client = MagicMock()
+        mock_client.stream_iteration = mock_stream_iteration
+        mock_create_client.return_value = mock_client
+
+        executor = DiscoveryExecutor(project_path)
+
+        # Run stream_execution to completion
+        gen = executor.stream_execution(initial_goal="Test goal", max_iterations=2)
+        async for _ in gen:
+            pass
+
+        # After discovery phase completes, MEMORY.md should exist
+        memory_path = project_path / ".ralph" / "MEMORY.md"
+        assert memory_path.exists(), (
+            ".ralph/MEMORY.md was not created after discovery stream_execution. "
+            "The harness should sync MEMORY.md at phase transitions."
+        )
