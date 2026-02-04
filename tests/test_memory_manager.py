@@ -336,7 +336,12 @@ class TestCaptureSessionHandoffMemory:
         state.session_tokens_used = 150000
         state.session_cost_usd = 2.50
 
-        task = Task(id="task-5", description="Current task", priority=1, status=TaskStatus.IN_PROGRESS)
+        task = Task(
+            id="task-5",
+            description="Current task",
+            priority=1,
+            status=TaskStatus.IN_PROGRESS,
+        )
         plan = ImplementationPlan(tasks=[task])
 
         manager = MemoryManager(tmp_path)

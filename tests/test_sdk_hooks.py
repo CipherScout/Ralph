@@ -16,6 +16,7 @@ from ralph.sdk_hooks import (
     create_uv_enforcement_hook,
     get_minimal_hooks,
     get_ralph_hooks,
+    get_safety_hooks,
 )
 
 
@@ -618,3 +619,182 @@ class TestGetMinimalHooks:
             create_hook_context(),
         )
         assert as_dict(result)["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+class TestTaskToolValidationHook:
+    """Tests for Task tool validation hook."""
+
+    def test_import_validation_hook(self) -> None:
+        """Test that we can import the validation hook function."""
+        from ralph.sdk_hooks import create_task_tool_validation_hook
+        assert callable(create_task_tool_validation_hook)
+
+    @pytest.fixture
+    def hook(self):
+        """Create Task tool validation hook."""
+        from ralph.sdk_hooks import create_task_tool_validation_hook
+
+        state = create_mock_state(phase=Phase.BUILDING)
+        return create_task_tool_validation_hook(state)
+
+    @pytest.mark.asyncio
+    async def test_allows_non_task_tools(self, hook) -> None:
+        """Non-Task tools are ignored."""
+        hook_fn = hook.hooks[0]
+        result = await hook_fn(
+            create_pre_tool_use_input("Read", {"file": "test.py"}),
+            "test-id",
+            create_hook_context(),
+        )
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_blocks_invalid_subagent_type(self, hook) -> None:
+        """Invalid subagent types are blocked."""
+        hook_fn = hook.hooks[0]
+        result = await hook_fn(
+            create_pre_tool_use_input("Task", {
+                "subagent_type": "invalid-agent",
+                "prompt": "Do something",
+                "description": "Test task"
+            }),
+            "test-id",
+            create_hook_context(),
+        )
+        assert as_dict(result)["hookSpecificOutput"]["permissionDecision"] == "deny"
+        reason = as_dict(result)["hookSpecificOutput"]["permissionDecisionReason"]
+        assert "invalid subagent" in reason.lower()
+
+    @pytest.mark.asyncio
+    async def test_blocks_subagent_not_allowed_in_phase(self) -> None:
+        """Subagents not allowed in current phase are blocked."""
+        from ralph.sdk_hooks import create_task_tool_validation_hook
+
+        # Create state in DISCOVERY phase
+        state = create_mock_state(phase=Phase.DISCOVERY)
+        hook = create_task_tool_validation_hook(state)
+        hook_fn = hook.hooks[0]
+
+        # Try to use test-engineer (not allowed in discovery)
+        result = await hook_fn(
+            create_pre_tool_use_input("Task", {
+                "subagent_type": "test-engineer",
+                "prompt": "Run tests",
+                "description": "Test task"
+            }),
+            "test-id",
+            create_hook_context(),
+        )
+        assert as_dict(result)["hookSpecificOutput"]["permissionDecision"] == "deny"
+        reason = as_dict(result)["hookSpecificOutput"]["permissionDecisionReason"]
+        assert "not allowed" in reason.lower()
+        assert "discovery" in reason.lower()
+
+    @pytest.mark.asyncio
+    async def test_allows_valid_subagent_in_phase(self, hook) -> None:
+        """Valid subagents allowed in current phase pass through."""
+        hook_fn = hook.hooks[0]
+        result = await hook_fn(
+            create_pre_tool_use_input("Task", {
+                "subagent_type": "code-reviewer",
+                "prompt": "Review this code",
+                "description": "Code review task"
+            }),
+            "test-id",
+            create_hook_context(),
+        )
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_handles_missing_subagent_type(self, hook) -> None:
+        """Handles Task tool calls missing subagent_type."""
+        hook_fn = hook.hooks[0]
+        result = await hook_fn(
+            create_pre_tool_use_input("Task", {
+                "prompt": "Do something",
+                "description": "Test task"
+                # Missing subagent_type
+            }),
+            "test-id",
+            create_hook_context(),
+        )
+        assert as_dict(result)["hookSpecificOutput"]["permissionDecision"] == "deny"
+        reason = as_dict(result)["hookSpecificOutput"]["permissionDecisionReason"]
+        assert "subagent_type" in reason.lower()
+
+    @pytest.mark.asyncio
+    async def test_logs_subagent_invocation_attempts(self, hook, caplog) -> None:
+        """Logs subagent invocation attempts."""
+        import logging
+
+        with caplog.at_level(logging.INFO):
+            hook_fn = hook.hooks[0]
+            await hook_fn(
+                create_pre_tool_use_input("Task", {
+                    "subagent_type": "code-reviewer",
+                    "prompt": "Review code",
+                    "description": "Code review"
+                }),
+                "test-id",
+                create_hook_context(),
+            )
+
+        # Check that invocation was logged
+        assert any("subagent invocation" in record.message.lower() for record in caplog.records)
+        assert any("code-reviewer" in record.message for record in caplog.records)
+
+
+class TestGetSafetyHooks:
+    """Tests for get_safety_hooks function."""
+
+    def test_import_safety_hooks(self) -> None:
+        """Test that we can import the get_safety_hooks function."""
+        from ralph.sdk_hooks import get_safety_hooks
+        assert callable(get_safety_hooks)
+
+    def test_returns_pre_tool_use_hooks(self) -> None:
+        """Returns hooks dict with PreToolUse key."""
+        state = create_mock_state()
+        hooks = get_safety_hooks(state)
+        assert "PreToolUse" in hooks
+        assert len(hooks["PreToolUse"]) > 0
+
+    def test_includes_task_validation_hook_by_default(self) -> None:
+        """Includes Task tool validation hook by default."""
+        state = create_mock_state()
+        hooks = get_safety_hooks(state)
+        # Should have at least 5 hooks with all options enabled (bash, uv, phase, cost, task)
+        assert len(hooks["PreToolUse"]) >= 5
+
+    def test_excludes_task_validation_when_disabled(self) -> None:
+        """Excludes Task tool validation hook when disabled."""
+        state = create_mock_state()
+        hooks_with = get_safety_hooks(state, include_task_validation=True)
+        hooks_without = get_safety_hooks(state, include_task_validation=False)
+        assert len(hooks_without["PreToolUse"]) < len(hooks_with["PreToolUse"])
+
+    def test_excludes_phase_validation_when_disabled(self) -> None:
+        """Excludes phase validation hook when disabled."""
+        state = create_mock_state()
+        hooks_with = get_safety_hooks(state, include_phase_validation=True)
+        hooks_without = get_safety_hooks(state, include_phase_validation=False)
+        assert len(hooks_without["PreToolUse"]) < len(hooks_with["PreToolUse"])
+
+    def test_excludes_cost_limits_when_disabled(self) -> None:
+        """Excludes cost limit hook when disabled."""
+        state = create_mock_state()
+        hooks_with = get_safety_hooks(state, include_cost_limits=True)
+        hooks_without = get_safety_hooks(state, include_cost_limits=False)
+        assert len(hooks_without["PreToolUse"]) < len(hooks_with["PreToolUse"])
+
+    def test_minimal_hooks_only_bash_and_uv(self) -> None:
+        """With all optional hooks disabled, only bash and uv hooks remain."""
+        state = create_mock_state()
+        hooks = get_safety_hooks(
+            state,
+            include_phase_validation=False,
+            include_cost_limits=False,
+            include_task_validation=False
+        )
+        # Should have exactly 2 hooks (bash safety + uv enforcement)
+        assert len(hooks["PreToolUse"]) == 2

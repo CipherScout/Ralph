@@ -6,6 +6,8 @@ functionality, including missing usage data, malformed events, and SDK errors.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from rich.console import Console
 
@@ -52,22 +54,22 @@ class TestMissingUsageDataHandling:
 
     def test_iteration_end_partial_usage_data(self, display: RalphLiveDisplay) -> None:
         """Test ITERATION_END event with partial usage data."""
-        test_cases = [
+        test_cases: list[dict[str, Any]] = [
             # Only tokens, no cost - should work fine
             {"tokens_used": 1500},
-            # Only cost, no tokens - should work fine  
+            # Only cost, no tokens - should work fine
             {"cost_usd": 0.0075},
             # Note: The current implementation doesn't handle None values gracefully
             # These would cause TypeError in the current CLI implementation
         ]
 
         for i, partial_data in enumerate(test_cases):
-            update_calls = []
-            display._update_spinner = lambda tokens=0, cost=0.0: update_calls.append(
+            update_calls: list[dict[str, Any]] = []
+            display._update_spinner = lambda tokens=0, cost=0.0, uc=update_calls: uc.append(  # type: ignore[misc]
                 {"tokens": tokens, "cost": cost}
             )
 
-            event_data = {"success": True}
+            event_data: dict[str, Any] = {"success": True}
             event_data.update(partial_data)
 
             event = StreamEvent(
@@ -89,20 +91,22 @@ class TestMissingUsageDataHandling:
             assert call["tokens"] >= 0  # Should not be negative
             assert call["cost"] >= 0.0  # Should not be negative
 
-    def test_iteration_end_with_none_values_handled_gracefully(self, display: RalphLiveDisplay) -> None:
+    def test_iteration_end_with_none_values_handled_gracefully(
+        self, display: RalphLiveDisplay
+    ) -> None:
         """Test ITERATION_END event with None values is handled gracefully."""
         update_calls = []
         display._update_spinner = lambda tokens=0, cost=0.0: update_calls.append(
             {"tokens": tokens, "cost": cost}
         )
 
-        test_cases = [
+        test_cases: list[dict[str, Any]] = [
             {"tokens_used": 1000, "cost_usd": None},
             {"tokens_used": None, "cost_usd": 0.005},
         ]
 
         for partial_data in test_cases:
-            event_data = {"success": True}
+            event_data: dict[str, Any] = {"success": True}
             event_data.update(partial_data)
 
             event = StreamEvent(
@@ -123,14 +127,16 @@ class TestMissingUsageDataHandling:
         assert update_calls[1]["tokens"] == 0
         assert update_calls[1]["cost"] == 0.005
 
-    def test_iteration_end_invalid_data_types_handled_gracefully(self, display: RalphLiveDisplay) -> None:
+    def test_iteration_end_invalid_data_types_handled_gracefully(
+        self, display: RalphLiveDisplay
+    ) -> None:
         """Test ITERATION_END event with invalid data types is handled gracefully."""
         update_calls = []
         display._update_spinner = lambda tokens=0, cost=0.0: update_calls.append(
             {"tokens": tokens, "cost": cost}
         )
 
-        invalid_data_cases = [
+        invalid_data_cases: list[dict[str, Any]] = [
             # String tokens - coerced to 0
             {"tokens_used": "invalid", "cost_usd": 0.005},
             # String cost - coerced to 0.0
@@ -138,7 +144,7 @@ class TestMissingUsageDataHandling:
         ]
 
         for i, invalid_data in enumerate(invalid_data_cases):
-            event_data = {"success": True}
+            event_data: dict[str, Any] = {"success": True}
             event_data.update(invalid_data)
 
             event = StreamEvent(
@@ -182,7 +188,7 @@ class TestMissingUsageDataHandling:
         # Should handle negative values (could be valid in some edge cases)
         assert len(update_calls) == 1
         call = update_calls[0]
-        
+
         # Depending on implementation, might clamp to 0 or preserve negative
         # The important thing is it doesn't crash
         assert isinstance(call["tokens"], int)
@@ -220,7 +226,7 @@ class TestMissingUsageDataHandling:
             type=StreamEventType.ITERATION_END,
             iteration=1,
             phase="building",
-            data=None  # None data
+            data=None  # type: ignore[arg-type]  # None data
         )
 
         # Should not crash with None data
@@ -244,13 +250,13 @@ class TestSpinnerErrorHandling:
 
         # update() only assigns when value is not None (None = "no change")
         # Non-None values are stored as-is without type validation
-        spinner.update(tokens="not_a_number", cost=0.0)
+        spinner.update(tokens="not_a_number", cost=0.0)  # type: ignore[arg-type]
         assert spinner._tokens == "not_a_number"
 
-        spinner.update(tokens=[], cost=0.0)
+        spinner.update(tokens=[], cost=0.0)  # type: ignore[arg-type]
         assert spinner._tokens == []
 
-        spinner.update(tokens={}, cost=0.0)
+        spinner.update(tokens={}, cost=0.0)  # type: ignore[arg-type]
         assert spinner._tokens == {}
 
         # None means "don't update", so previous value is preserved
@@ -262,13 +268,13 @@ class TestSpinnerErrorHandling:
         spinner = ThinkingSpinner(console, show_tips=False)
 
         # Non-None values are stored as-is without type validation
-        spinner.update(tokens=1000, cost="not_a_number")
+        spinner.update(tokens=1000, cost="not_a_number")  # type: ignore[arg-type]
         assert spinner._cost == "not_a_number"
 
-        spinner.update(tokens=1000, cost=[])
+        spinner.update(tokens=1000, cost=[])  # type: ignore[arg-type]
         assert spinner._cost == []
 
-        spinner.update(tokens=1000, cost={})
+        spinner.update(tokens=1000, cost={})  # type: ignore[arg-type]
         assert spinner._cost == {}
 
         # None means "don't update", so previous value is preserved
@@ -280,10 +286,10 @@ class TestSpinnerErrorHandling:
         spinner = ThinkingSpinner(console, show_tips=False)
 
         # Simulate corrupted state
-        spinner._tokens = None
-        spinner._cost = None
-        spinner._verb = None
-        spinner._tip = None
+        spinner._tokens = None  # type: ignore[assignment]
+        spinner._cost = None  # type: ignore[assignment]
+        spinner._verb = None  # type: ignore[assignment]
+        spinner._tip = None  # type: ignore[assignment]
 
         # Should not crash when rendering corrupted state
         try:
@@ -306,7 +312,7 @@ class TestSpinnerErrorHandling:
         ]
 
         for case in extreme_cases:
-            spinner._tokens = case["tokens"]
+            spinner._tokens = case["tokens"]  # type: ignore[assignment]
             spinner._cost = case["cost"]
 
             # Should handle extreme values gracefully
@@ -340,7 +346,7 @@ class TestSDKIntegrationErrorHandling:
         malformed_events = [
             # Missing iteration
             {"type": StreamEventType.ITERATION_END, "phase": "building", "data": {}},
-            # Missing phase  
+            # Missing phase
             {"type": StreamEventType.ITERATION_END, "iteration": 1, "data": {}},
             # Missing type
             {"iteration": 1, "phase": "building", "data": {}},
@@ -349,7 +355,7 @@ class TestSDKIntegrationErrorHandling:
         for malformed_data in malformed_events:
             try:
                 # Try to create event with malformed data
-                event = StreamEvent(**malformed_data)
+                event = StreamEvent(**malformed_data)  # type: ignore[arg-type]
                 display.handle_event(event)
             except (TypeError, ValueError):
                 # It's acceptable for malformed events to raise exceptions
@@ -362,7 +368,7 @@ class TestSDKIntegrationErrorHandling:
             # Event with minimal data
             StreamEvent(
                 type=StreamEventType.ITERATION_END,
-                iteration=1, 
+                iteration=1,
                 phase="building",
                 data={"success": False}  # Failed iteration
             ),
@@ -370,7 +376,7 @@ class TestSDKIntegrationErrorHandling:
             StreamEvent(
                 type=StreamEventType.ITERATION_END,
                 iteration=1,
-                phase="building", 
+                phase="building",
                 data={
                     "success": True,
                     "result": {"nested": {"tokens": 1000}}  # Nested structure
@@ -459,7 +465,7 @@ class TestTokenDisplayFallbackBehavior:
         """Create a test console."""
         return Console(force_terminal=True, no_color=True, quiet=True)
 
-    @pytest.fixture 
+    @pytest.fixture
     def display(self, console: Console) -> RalphLiveDisplay:
         """Create a RalphLiveDisplay for testing."""
         return RalphLiveDisplay(console, verbosity=1)
@@ -482,7 +488,7 @@ class TestTokenDisplayFallbackBehavior:
         original_print = display.console.print
 
         def failing_print(*args, **kwargs):
-            raise IOError("Console output failed")
+            raise OSError("Console output failed")
 
         display.console.print = failing_print
 
@@ -497,11 +503,11 @@ class TestTokenDisplayFallbackBehavior:
                     "cost_usd": 0.005,
                 }
             )
-            
+
             # Current implementation will raise IOError when console.print fails
             with pytest.raises(IOError):
                 display.handle_event(event)
-        
+
         finally:
             # Restore original print method
             display.console.print = original_print
@@ -510,28 +516,30 @@ class TestTokenDisplayFallbackBehavior:
         """Test fallback to basic display when advanced features fail."""
         # Simulate various component failures
         display._spinner = None  # Spinner failed
-        
+
         # Track what basic output still works
         output_captured = []
         original_print = display.console.print
-        display.console.print = lambda *args, **kwargs: output_captured.append(str(args[0]) if args else "")
+        display.console.print = lambda *args, **kwargs: output_captured.append(
+            str(args[0]) if args else ""
+        )
 
         try:
             event = StreamEvent(
                 type=StreamEventType.ITERATION_END,
                 iteration=1,
-                phase="building", 
+                phase="building",
                 data={
                     "success": True,
                     "tokens_used": 1500,
                     "cost_usd": 0.0075,
                 }
             )
-            
+
             display.handle_event(event)
-            
+
             # Should still produce some output even with component failures
             # (Implementation dependent - might be silent fallback)
-            
+
         finally:
             display.console.print = original_print

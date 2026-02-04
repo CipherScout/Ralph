@@ -39,6 +39,8 @@ from ralph.events import (
     error_event,
     iteration_end_event,
     iteration_start_event,
+    subagent_end_event,
+    subagent_start_event,
     task_blocked_event,
     task_complete_event,
     text_delta_event,
@@ -47,6 +49,7 @@ from ralph.events import (
     warning_event,
 )
 from ralph.models import Phase, RalphState
+from ralph.subagents import SubagentMetrics, collect_subagent_metrics, get_subagents_for_phase
 
 if TYPE_CHECKING:
     from ralph.config import RalphConfig
@@ -206,10 +209,15 @@ async def _default_can_use_tool(
     """Default permission callback that handles AskUserQuestion specially.
 
     For AskUserQuestion, this displays questions and collects user answers.
+    For Task tools, we allow them but don't track them (no iteration context).
     For other tools, it allows them (other restrictions are handled by hooks).
     """
     if tool_name == "AskUserQuestion":
         return await _default_ask_handler(input_data)
+
+    # Task tools are allowed but not tracked in default callback
+    if tool_name == "Task":
+        return PermissionResultAllow()
 
     # Allow other tools (hooks handle restrictions)
     return PermissionResultAllow()
@@ -241,6 +249,12 @@ class IterationResult:
     metrics: IterationMetrics = field(default_factory=IterationMetrics)
     messages: list[Message] = field(default_factory=list)
     final_text: str = ""
+
+    # Subagent tracking fields
+    subagent_reports: dict[str, str] = field(default_factory=dict)
+    subagent_invocations: list[str] = field(default_factory=list)
+    subagent_costs: dict[str, float] = field(default_factory=dict)
+    subagent_metrics: list[SubagentMetrics] = field(default_factory=list)
 
 
 # Approximate pricing per 1M tokens (as of 2026)
@@ -289,6 +303,8 @@ ALL_SDK_TOOLS: list[str] = [
     # MCP resource tools
     "ListMcpResourcesTool",
     "ReadMcpResourceTool",
+    # Claude Code plugin tools
+    "Skill",
 ]
 
 # Tools available in Building phase - excludes AskUserQuestion
@@ -380,6 +396,10 @@ class RalphSDKClient:
         self._session_id: str | None = None
         self.user_input_callbacks = user_input_callbacks
 
+        # Track active Task tools and subagent data for current iteration
+        self._current_iteration_result: IterationResult | None = None
+        self._active_task_tools: dict[str, dict[str, Any]] = {}  # tool_id -> task_info
+
         # Memory manager for context handoff (SPEC-004 + SPEC-005)
         if memory_manager is not None:
             self.memory_manager = memory_manager
@@ -420,12 +440,19 @@ class RalphSDKClient:
         current_phase = phase or self.state.current_phase
         allowed_tools = get_tools_for_phase(current_phase)
 
+        # Ensure Task tool is included for subagent invocation
+        if "Task" not in allowed_tools:
+            allowed_tools.append("Task")
+
         # Add Ralph MCP tools to allowed list if we have an MCP server
         if self.mcp_servers:
             from ralph.mcp_tools import get_ralph_tool_names
 
             for server_name in self.mcp_servers:
                 allowed_tools.extend(get_ralph_tool_names(server_name))
+
+        # Get phase-appropriate subagents
+        subagents = get_subagents_for_phase(current_phase, self.config)
 
         # Build budget limit if configured
         max_budget_usd: float | None = None
@@ -443,6 +470,8 @@ class RalphSDKClient:
             ) -> PermissionResultAllow | PermissionResultDeny:
                 if tool_name == "AskUserQuestion":
                     return await ask_handler(input_data)
+                elif tool_name == "Task":
+                    return await self._handle_task_tool(input_data, context)
                 return PermissionResultAllow()
 
             tool_callback = can_use_tool
@@ -451,6 +480,7 @@ class RalphSDKClient:
 
         return ClaudeAgentOptions(
             allowed_tools=allowed_tools,
+            agents=subagents,  # Pass subagents to ClaudeAgentOptions
             system_prompt=system_prompt,
             permission_mode="acceptEdits",
             cwd=str(self.state.project_root),
@@ -652,6 +682,10 @@ class RalphSDKClient:
         completion_notes: str | None = None
         final_text_parts: list[str] = []
 
+        # Initialize iteration tracking for subagents
+        self._current_iteration_result = IterationResult(success=True)
+        self._active_task_tools = {}
+
         # Yield iteration start event
         yield iteration_start_event(
             iteration=self.state.iteration_count,
@@ -695,8 +729,31 @@ class RalphSDKClient:
                                 # which displays questions and collects answers BEFORE
                                 # the tool executes. We just observe the tool call here.
 
+                                # Handle Task tool to emit subagent start event
+                                if block.name == "Task":
+                                    subagent_type = tool_input_dict.get("subagent_type")
+                                    task_desc = tool_input_dict.get("description", "")
+
+                                    # Store task info for result processing
+                                    self._active_task_tools[block.id] = {
+                                        "subagent_type": subagent_type,
+                                        "description": task_desc,
+                                        "start_time": datetime.now(),
+                                    }
+
+                                    if subagent_type and self._current_iteration_result:
+                                        # Track subagent invocation
+                                        invocation_key = f"{subagent_type}:{task_desc}"
+                                        self._current_iteration_result.subagent_invocations.append(invocation_key)
+
+                                        # Emit subagent start event
+                                        yield subagent_start_event(
+                                            subagent_type=subagent_type,
+                                            task_description=task_desc,
+                                        )
+
                                 # Check for Ralph task management tools
-                                if "ralph_mark_task_complete" in block.name:
+                                elif "ralph_mark_task_complete" in block.name:
                                     task_completed = True
                                     task_id = tool_input_dict.get("task_id")
                                     completion_notes = tool_input_dict.get(
@@ -773,6 +830,10 @@ class RalphSDKClient:
                 yield error_event(str(e), error_type="unknown")
                 logger.error("SDK error during iteration: %s", e, exc_info=True)
 
+        # Process any remaining active Task tools and emit SubagentEndEvent
+        async for event in self._finalize_task_tools(final_text_parts):
+            yield event
+
         # Calculate final metrics
         end_time = datetime.now()
         duration_ms = int((end_time - start_time).total_seconds() * 1000)
@@ -833,6 +894,172 @@ class RalphSDKClient:
                         result_parts.append(block.text)
 
         return "\n".join(result_parts)
+
+    async def _handle_task_tool(
+        self,
+        input_data: dict[str, Any],
+        context: ToolPermissionContext,
+    ) -> PermissionResultAllow:
+        """Handle Task tool invocation by tracking subagent data.
+
+        This method is called BEFORE the Task tool executes. It tracks the
+        subagent invocation for later processing when the result comes back.
+
+        Args:
+            input_data: Task tool input parameters
+            context: Tool permission context
+
+        Returns:
+            PermissionResultAllow to allow the Task tool to execute
+        """
+        subagent_type = input_data.get("subagent_type")
+        task_description = input_data.get("description", "")
+
+        # Track this Task tool invocation if we have iteration tracking
+        if self._current_iteration_result and subagent_type:
+            # Record subagent invocation
+            invocation_key = f"{subagent_type}:{task_description}"
+            self._current_iteration_result.subagent_invocations.append(invocation_key)
+
+            logger.debug(
+                "Tracking Task tool invocation: %s with description '%s'",
+                subagent_type, task_description
+            )
+
+        # Always allow Task tool to execute
+        return PermissionResultAllow()
+
+    async def _finalize_task_tools(
+        self, final_text_parts: list[str]
+    ) -> AsyncGenerator[StreamEvent, None]:
+        """Finalize any active Task tools and emit SubagentEndEvent.
+
+        This method processes Task tool results by analyzing the final text
+        output and extracting subagent reports. It yields SubagentEndEvent
+        for each completed Task tool.
+
+        Args:
+            final_text_parts: List of text parts from the iteration
+
+        Yields:
+            SubagentEndEvent for each completed Task tool
+        """
+        if not self._active_task_tools or not self._current_iteration_result:
+            return
+
+        # Combine all final text to analyze for subagent reports
+        final_text = "\n".join(final_text_parts)
+
+        # Process each active Task tool
+        for tool_id, task_info in self._active_task_tools.items():
+            subagent_type = task_info.get("subagent_type")
+            start_time = task_info.get("start_time")
+            if not subagent_type or not start_time:
+                continue
+
+            # Look for subagent report in the final text
+            # This is a heuristic approach - we assume subagent reports
+            # contain markdown headers and structured content
+            report_content = self._extract_subagent_report(final_text, subagent_type)
+
+            success = len(report_content) > 0
+            report_length = len(report_content)
+
+            # Estimate cost and tokens based on content length (rough approximation)
+            estimated_cost = (
+                self._estimate_subagent_cost(report_length)
+                if success and report_content
+                else 0.0
+            )
+            estimated_tokens = (report_length // 4) if report_content else 0
+
+            # Collect comprehensive subagent metrics
+            metrics = collect_subagent_metrics(
+                subagent_type=subagent_type,
+                start_time=start_time,
+                success=success,
+                report_content=report_content,
+                tokens_used=estimated_tokens,
+                cost_estimate=estimated_cost,
+                error=None if success else "No substantial report generated"
+            )
+
+            # Update iteration tracking with both legacy and new metrics
+            if success and report_content:
+                self._current_iteration_result.subagent_reports[subagent_type] = report_content
+                self._current_iteration_result.subagent_costs[subagent_type] = estimated_cost
+
+            # Store the comprehensive metrics
+            self._current_iteration_result.subagent_metrics.append(metrics)
+
+            # Emit SubagentEndEvent
+            yield subagent_end_event(
+                subagent_type=subagent_type,
+                success=success,
+                report_length=report_length,
+            )
+
+            logger.debug(
+                "Finalizing Task tool %s: subagent_type=%s, success=%s, report_length=%d",
+                tool_id, subagent_type, success, report_length
+            )
+
+        # Clear active task tools
+        self._active_task_tools = {}
+
+    def _extract_subagent_report(self, text: str, subagent_type: str) -> str:
+        """Extract subagent report content from iteration text for metrics tracking.
+
+        The Claude Agent SDK handles passing subagent results back to the main
+        agent natively. This method exists solely to capture report content for
+        Ralph's internal metrics and cost estimation — it does NOT participate
+        in the result-passing pipeline.
+
+        Args:
+            text: Full text output from iteration
+            subagent_type: Type of subagent to look for
+
+        Returns:
+            Extracted report content or empty string if not found
+        """
+        # Look for structured report patterns specific to subagent output
+        lines = text.split('\n')
+        report_lines: list[str] = []
+        in_report = False
+
+        report_keywords = [
+            'executive summary', 'analysis report', 'review report',
+            'recommendations', 'findings', 'assessment',
+        ]
+
+        for line in lines:
+            if any(keyword in line.lower() for keyword in report_keywords):
+                in_report = True
+                report_lines.append(line)
+            elif in_report:
+                report_lines.append(line)
+
+        # Return substantial content only
+        report_content = '\n'.join(report_lines).strip()
+        return report_content if len(report_content) > 100 else ""
+
+    def _estimate_subagent_cost(self, report_length: int) -> float:
+        """Estimate subagent cost based on report length.
+
+        Args:
+            report_length: Length of report content in characters
+
+        Returns:
+            Estimated cost in USD
+        """
+        # Rough estimation: assume ~4 chars per token, estimate input/output
+        estimated_tokens = report_length // 4
+        # Assume roughly equal input/output split
+        input_tokens = estimated_tokens // 2
+        output_tokens = estimated_tokens - input_tokens
+
+        # Use default sonnet pricing for estimation
+        return calculate_cost(input_tokens, output_tokens, "claude-sonnet-4-20250514")
 
     def reset_session(self) -> None:
         """Reset session ID to start a fresh conversation."""

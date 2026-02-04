@@ -280,7 +280,7 @@ class TestSpinnerTokenRendering:
             (1_000_000_000, "1000.0M"),
         ]
 
-        for tokens, expected_format in test_cases:
+        for tokens, _expected_format in test_cases:
             spinner = ThinkingSpinner(console, show_tips=False)
             spinner._tokens = tokens
             spinner._cost = tokens * 0.000018
@@ -374,7 +374,10 @@ class TestSpinnerTokenRendering:
         spinner._tokens = 1000
         spinner._cost = 0.005
         # Very long tip that should be truncated
-        spinner._tip = "This is a very long tip message that should be truncated to fit in the display"
+        spinner._tip = (
+            "This is a very long tip message that should be"
+            " truncated to fit in the display"
+        )
 
         rendered = spinner._render()
         text_str = rendered.plain
@@ -396,20 +399,20 @@ class TestSpinnerTokenRendering:
 
         for scenario in test_scenarios:
             spinner = ThinkingSpinner(console, show_tips=bool(scenario["tip"]))
-            spinner._tokens = scenario["tokens"]
-            spinner._cost = scenario["cost"]
+            spinner._tokens = scenario["tokens"]  # type: ignore[assignment]
+            spinner._cost = scenario["cost"]  # type: ignore[assignment]
             if scenario["tip"]:
-                spinner._tip = scenario["tip"]
+                spinner._tip = scenario["tip"]  # type: ignore[assignment]
 
             rendered = spinner._render()
             text_str = rendered.plain
 
             # All renders should contain a spinner character
             assert any(char in text_str for char in "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-            
+
             # All renders should contain a thinking verb
             thinking_verbs = [
-                "Thinking", "Pondering", "Analyzing", "Processing", 
+                "Thinking", "Pondering", "Analyzing", "Processing",
                 "Considering", "Reasoning", "Working", "Computing",
                 "Evaluating", "Synthesizing"
             ]
@@ -418,7 +421,7 @@ class TestSpinnerTokenRendering:
     def test_format_token_count_edge_cases(self, console: Console) -> None:
         """Test the format_token_count function with edge cases."""
         from ralph.animations import format_token_count
-        
+
         # Test boundary conditions
         test_cases = [
             (0, "0"),
@@ -436,16 +439,19 @@ class TestSpinnerTokenRendering:
 
         for tokens, expected in test_cases:
             result = format_token_count(tokens)
-            assert result == expected, f"format_token_count({tokens}) = {result}, expected {expected}"
+            assert result == expected, (
+                f"format_token_count({tokens})"
+                f" = {result}, expected {expected}"
+            )
 
     def test_spinner_render_thread_safety(self, console: Console) -> None:
         """Test that spinner rendering is thread-safe with token updates."""
         import threading
         import time
-        
+
         spinner = ThinkingSpinner(console, show_tips=False)
         errors = []
-        
+
         def update_tokens():
             """Update tokens from another thread."""
             try:
@@ -454,7 +460,7 @@ class TestSpinnerTokenRendering:
                     time.sleep(0.01)
             except Exception as e:
                 errors.append(e)
-        
+
         def render_spinner():
             """Render spinner from another thread."""
             try:
@@ -463,17 +469,17 @@ class TestSpinnerTokenRendering:
                     time.sleep(0.01)
             except Exception as e:
                 errors.append(e)
-        
+
         # Start threads
         update_thread = threading.Thread(target=update_tokens)
         render_thread = threading.Thread(target=render_spinner)
-        
+
         update_thread.start()
         render_thread.start()
-        
+
         # Wait for completion
         update_thread.join()
         render_thread.join()
-        
+
         # Should not have any errors
         assert len(errors) == 0, f"Thread safety errors: {errors}"

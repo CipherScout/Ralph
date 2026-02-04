@@ -297,6 +297,55 @@ class RalphLiveDisplay:
                 f"forcing handoff[/red bold]"
             )
 
+        elif event.type == StreamEventType.SUBAGENT_START:
+            # Stop spinner to show subagent invocation
+            self._stop_spinner()
+            if self.verbosity >= 1:
+                data = event.data or {}
+                subagent_type = data.get("subagent_type", "unknown")
+                task_description = data.get("task_description", "")
+
+                # Display subagent invocation with robot emoji and blue styling
+                self.console.print(
+                    f"[bold blue]🤖 Invoking {subagent_type}[/bold blue]"
+                )
+                if task_description and self.verbosity >= 1:
+                    # Truncate long task descriptions for readability
+                    if len(task_description) > 80:
+                        task_description = task_description[:77] + "..."
+                    self.console.print(f"[dim]  Task: {task_description}[/dim]")
+            # Restart spinner - subagent continues execution
+            self._start_spinner()
+
+        elif event.type == StreamEventType.SUBAGENT_END:
+            # Stop spinner to show completion status
+            self._stop_spinner()
+            if self.verbosity >= 1:
+                data = event.data or {}
+                subagent_type = data.get("subagent_type", "unknown")
+                success = data.get("success", False)
+                report_length = data.get("report_length", 0)
+
+                # Display completion status with appropriate icon
+                if success:
+                    status_icon = "✓"
+                    status_color = "green"
+                    status_text = "completed"
+                else:
+                    status_icon = "✗"
+                    status_color = "red"
+                    status_text = "failed"
+
+                self.console.print(
+                    f"[{status_color}]{status_icon} {subagent_type} {status_text}[/{status_color}]"
+                )
+
+                # Show report length if available and verbose
+                if self.verbosity >= 1 and report_length > 0:
+                    self.console.print(f"[dim]  Report: {report_length:,} chars[/dim]")
+            # Restart spinner - continue processing after subagent
+            self._start_spinner()
+
         return None
 
     def _summarize_tool_input(

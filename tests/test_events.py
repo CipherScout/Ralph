@@ -3,12 +3,16 @@
 from ralph.events import (
     StreamEvent,
     StreamEventType,
+    SubagentEndEvent,
+    SubagentStartEvent,
     context_emergency_event,
     context_warning_event,
     error_event,
     info_event,
     iteration_end_event,
     iteration_start_event,
+    subagent_end_event,
+    subagent_start_event,
     text_delta_event,
     tool_end_event,
     tool_start_event,
@@ -28,6 +32,16 @@ class TestStreamEventType:
         """CONTEXT_EMERGENCY event type exists (SPEC-005)."""
         assert hasattr(StreamEventType, "CONTEXT_EMERGENCY")
         assert StreamEventType.CONTEXT_EMERGENCY.value == "context_emergency"
+
+    def test_subagent_start_type_exists(self) -> None:
+        """SUBAGENT_START event type exists."""
+        assert hasattr(StreamEventType, "SUBAGENT_START")
+        assert StreamEventType.SUBAGENT_START.value == "subagent_start"
+
+    def test_subagent_end_type_exists(self) -> None:
+        """SUBAGENT_END event type exists."""
+        assert hasattr(StreamEventType, "SUBAGENT_END")
+        assert StreamEventType.SUBAGENT_END.value == "subagent_end"
 
 
 class TestStreamEvent:
@@ -239,3 +253,135 @@ class TestStreamEventSerialization:
         assert "cost_usd" not in data
         assert "text" in data
         assert data["text"] == "Hello"
+
+
+class TestSubagentEvents:
+    """Tests for subagent lifecycle event dataclasses and factory functions."""
+
+    def test_subagent_start_event_dataclass_exists(self) -> None:
+        """SubagentStartEvent dataclass exists with correct fields."""
+        event = SubagentStartEvent(
+            subagent_type="research-specialist",
+            task_description="Analyze library options"
+        )
+        assert event.subagent_type == "research-specialist"
+        assert event.task_description == "Analyze library options"
+
+    def test_subagent_start_event_literal_types(self) -> None:
+        """SubagentStartEvent uses Literal type annotations for subagent_type."""
+        # Test all valid subagent types with explicit type annotations
+        event1 = SubagentStartEvent(
+            subagent_type="research-specialist",
+            task_description="Test task"
+        )
+        assert event1.subagent_type == "research-specialist"
+
+        event2 = SubagentStartEvent(
+            subagent_type="code-reviewer",
+            task_description="Test task"
+        )
+        assert event2.subagent_type == "code-reviewer"
+
+        event3 = SubagentStartEvent(
+            subagent_type="test-engineer",
+            task_description="Test task"
+        )
+        assert event3.subagent_type == "test-engineer"
+
+        event4 = SubagentStartEvent(
+            subagent_type="documentation-agent",
+            task_description="Test task"
+        )
+        assert event4.subagent_type == "documentation-agent"
+
+        event5 = SubagentStartEvent(
+            subagent_type="product-analyst",
+            task_description="Test task"
+        )
+        assert event5.subagent_type == "product-analyst"
+
+    def test_subagent_end_event_dataclass_exists(self) -> None:
+        """SubagentEndEvent dataclass exists with correct fields."""
+        event = SubagentEndEvent(
+            subagent_type="test-engineer",
+            success=True,
+            report_length=1500
+        )
+        assert event.subagent_type == "test-engineer"
+        assert event.success is True
+        assert event.report_length == 1500
+
+    def test_subagent_end_event_literal_types(self) -> None:
+        """SubagentEndEvent uses Literal type annotations for subagent_type."""
+        # Test all valid subagent types with explicit type annotations
+        event1 = SubagentEndEvent(
+            subagent_type="research-specialist",
+            success=False,
+            report_length=0
+        )
+        assert event1.subagent_type == "research-specialist"
+
+        event2 = SubagentEndEvent(
+            subagent_type="code-reviewer",
+            success=False,
+            report_length=0
+        )
+        assert event2.subagent_type == "code-reviewer"
+
+        event3 = SubagentEndEvent(
+            subagent_type="test-engineer",
+            success=False,
+            report_length=0
+        )
+        assert event3.subagent_type == "test-engineer"
+
+        event4 = SubagentEndEvent(
+            subagent_type="documentation-agent",
+            success=False,
+            report_length=0
+        )
+        assert event4.subagent_type == "documentation-agent"
+
+        event5 = SubagentEndEvent(
+            subagent_type="product-analyst",
+            success=False,
+            report_length=0
+        )
+        assert event5.subagent_type == "product-analyst"
+
+    def test_subagent_start_event_factory_function(self) -> None:
+        """subagent_start_event factory function creates correct event."""
+        event = subagent_start_event(
+            subagent_type="code-reviewer",
+            task_description="Review security vulnerabilities"
+        )
+        assert event.type == StreamEventType.SUBAGENT_START
+        assert event.data["subagent_type"] == "code-reviewer"
+        assert event.data["task_description"] == "Review security vulnerabilities"
+
+    def test_subagent_end_event_factory_function(self) -> None:
+        """subagent_end_event factory function creates correct event."""
+        event = subagent_end_event(
+            subagent_type="documentation-agent",
+            success=True,
+            report_length=2000
+        )
+        assert event.type == StreamEventType.SUBAGENT_END
+        assert event.data["subagent_type"] == "documentation-agent"
+        assert event.data["success"] is True
+        assert event.data["report_length"] == 2000
+
+    def test_subagent_events_can_be_imported(self) -> None:
+        """SubagentStartEvent and SubagentEndEvent can be imported and instantiated."""
+        # This test verifies the import functionality works
+        start_event = SubagentStartEvent(
+            subagent_type="product-analyst",
+            task_description="Analyze requirements"
+        )
+        end_event = SubagentEndEvent(
+            subagent_type="product-analyst",
+            success=True,
+            report_length=800
+        )
+        assert start_event.subagent_type == "product-analyst"
+        assert end_event.subagent_type == "product-analyst"

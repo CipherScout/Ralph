@@ -393,13 +393,19 @@ class TestRalphStateEndIterationProgress:
     def test_end_iteration_with_progress(self) -> None:
         """end_iteration passes progress_made to circuit breaker."""
         state = RalphState(project_root=Path("/test"))
-        state.end_iteration(cost_usd=0.01, tokens_used=100, task_completed=False, progress_made=True)
+        state.end_iteration(
+            cost_usd=0.01, tokens_used=100,
+            task_completed=False, progress_made=True,
+        )
         assert state.circuit_breaker.stagnation_count == 0
 
     def test_end_iteration_without_progress(self) -> None:
         """end_iteration without progress increments stagnation."""
         state = RalphState(project_root=Path("/test"))
-        state.end_iteration(cost_usd=0.01, tokens_used=100, task_completed=False, progress_made=False)
+        state.end_iteration(
+            cost_usd=0.01, tokens_used=100,
+            task_completed=False, progress_made=False,
+        )
         assert state.circuit_breaker.stagnation_count == 1
 
     def test_end_iteration_task_completed_resets_stagnation(self) -> None:
@@ -407,7 +413,10 @@ class TestRalphStateEndIterationProgress:
         state = RalphState(project_root=Path("/test"))
         # Create stagnation first
         state.circuit_breaker.stagnation_count = 3
-        state.end_iteration(cost_usd=0.01, tokens_used=100, task_completed=True, progress_made=False)
+        state.end_iteration(
+            cost_usd=0.01, tokens_used=100,
+            task_completed=True, progress_made=False,
+        )
         assert state.circuit_breaker.stagnation_count == 0
 
     def test_end_iteration_progress_prevents_halt(self) -> None:
@@ -415,9 +424,18 @@ class TestRalphStateEndIterationProgress:
         state = RalphState(project_root=Path("/test"))
         state.circuit_breaker.max_stagnation_iterations = 3
         # Do iterations with progress - should not halt
-        state.end_iteration(cost_usd=0.01, tokens_used=100, task_completed=False, progress_made=True)
-        state.end_iteration(cost_usd=0.01, tokens_used=100, task_completed=False, progress_made=True)
-        state.end_iteration(cost_usd=0.01, tokens_used=100, task_completed=False, progress_made=True)
+        state.end_iteration(
+            cost_usd=0.01, tokens_used=100,
+            task_completed=False, progress_made=True,
+        )
+        state.end_iteration(
+            cost_usd=0.01, tokens_used=100,
+            task_completed=False, progress_made=True,
+        )
+        state.end_iteration(
+            cost_usd=0.01, tokens_used=100,
+            task_completed=False, progress_made=True,
+        )
         halt, reason = state.should_halt()
         assert halt is False
 

@@ -1214,7 +1214,6 @@ class TestSyncMemoryFile:
         self, mock_create_client: MagicMock, project_path: Path
     ) -> None:
         """stream_iteration creates .ralph/MEMORY.md after iteration completes."""
-        from ralph.events import StreamEventType
 
         async def mock_stream_iteration(prompt, phase, system_prompt, max_turns):
             from ralph.events import iteration_end_event, text_delta_event

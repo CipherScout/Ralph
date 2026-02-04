@@ -10,6 +10,7 @@ Welcome to the Ralph documentation! Ralph is a deterministic agentic coding loop
 | [Core Concepts](core-concepts.md) | Philosophy, phases, state management, and safety controls |
 | [CLI Reference](cli-reference.md) | Complete command reference with examples |
 | [Configuration](configuration.md) | All configuration options and examples |
+| [Subagents](subagents.md) | Specialized AI subagents for domain expertise |
 | [Troubleshooting](troubleshooting.md) | Common issues and how to solve them |
 | [Architecture](architecture.md) | Internal design for contributors |
 
@@ -34,7 +35,8 @@ Welcome to the Ralph documentation! Ralph is a deterministic agentic coding loop
 ### Setting Up for Your Project
 
 1. [Configuration](configuration.md) - Customize Ralph for your needs
-2. [CLI Reference](cli-reference.md) - Learn the commands you'll use daily
+2. [Subagents](subagents.md) - Understand specialized AI assistants available
+3. [CLI Reference](cli-reference.md) - Learn the commands you'll use daily
 
 ### When Things Go Wrong
 

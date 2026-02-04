@@ -9,7 +9,7 @@ Ralph is a deterministic agentic coding loop built on Claude Agent SDK. It orche
 **IMPORTANT: Always use `uv` for all Python commands - never use bare `python`, `pytest`, `pip`, etc.**
 
 ```bash
-# Run tests (554 tests expected to pass)
+# Run tests (1200+ tests expected to pass)
 uv run pytest tests/ -v
 
 # Run specific test file
@@ -103,7 +103,7 @@ Each phase has an executor in `executors.py`:
 
 ## Testing Requirements
 
-- All 554 tests must pass before committing
+- All tests must pass before committing
 - Test files mirror source structure: `tests/test_<module>.py`
 - Use `pytest-asyncio` for async tests (auto mode configured)
 - Mock SDK client for unit tests

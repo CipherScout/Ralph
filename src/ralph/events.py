@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 
 class StreamEventType(str, Enum):
@@ -48,6 +48,10 @@ class StreamEventType(str, Enum):
     # Task events
     TASK_COMPLETE = "task_complete"  # Task marked complete
     TASK_BLOCKED = "task_blocked"  # Task blocked
+
+    # Subagent events
+    SUBAGENT_START = "subagent_start"  # Subagent starting execution
+    SUBAGENT_END = "subagent_end"  # Subagent finished execution
 
     # Context events
     HANDOFF_START = "handoff_start"  # Context handoff starting
@@ -185,6 +189,46 @@ class StreamEvent:
             token_usage=data.get("token_usage"),
             cost_usd=data.get("cost_usd"),
         )
+
+
+# Subagent type definitions
+SubagentType = Literal[
+    "research-specialist",
+    "code-reviewer",
+    "test-engineer",
+    "documentation-agent",
+    "product-analyst"
+]
+
+
+@dataclass
+class SubagentStartEvent:
+    """Event data for subagent lifecycle start.
+
+    Tracks when a subagent begins execution with its assigned task.
+
+    Attributes:
+        subagent_type: Type of subagent being started (using Literal type annotation)
+        task_description: Description of the task assigned to the subagent
+    """
+    subagent_type: SubagentType
+    task_description: str
+
+
+@dataclass
+class SubagentEndEvent:
+    """Event data for subagent lifecycle end.
+
+    Tracks when a subagent completes execution with results.
+
+    Attributes:
+        subagent_type: Type of subagent that finished (using Literal type annotation)
+        success: Whether the subagent completed successfully
+        report_length: Length of the subagent's report/output in characters
+    """
+    subagent_type: SubagentType
+    success: bool
+    report_length: int
 
 
 # Factory functions for common event types
@@ -422,5 +466,52 @@ def context_emergency_event(
             "usage_percent": usage_percent,
             "current_tokens": current_tokens,
             "message": f"Emergency: Context at {usage_percent:.1f}% - forcing handoff",
+        },
+    )
+
+
+def subagent_start_event(
+    subagent_type: SubagentType,
+    task_description: str,
+) -> StreamEvent:
+    """Create a SUBAGENT_START event for tracking subagent lifecycle.
+
+    Args:
+        subagent_type: Type of subagent being started
+        task_description: Description of the task assigned to the subagent
+
+    Returns:
+        StreamEvent with subagent start information
+    """
+    return StreamEvent(
+        type=StreamEventType.SUBAGENT_START,
+        data={
+            "subagent_type": subagent_type,
+            "task_description": task_description,
+        },
+    )
+
+
+def subagent_end_event(
+    subagent_type: SubagentType,
+    success: bool,
+    report_length: int,
+) -> StreamEvent:
+    """Create a SUBAGENT_END event for tracking subagent lifecycle.
+
+    Args:
+        subagent_type: Type of subagent that finished
+        success: Whether the subagent completed successfully
+        report_length: Length of the subagent's report/output in characters
+
+    Returns:
+        StreamEvent with subagent end information
+    """
+    return StreamEvent(
+        type=StreamEventType.SUBAGENT_END,
+        data={
+            "subagent_type": subagent_type,
+            "success": success,
+            "report_length": report_length,
         },
     )

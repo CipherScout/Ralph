@@ -6,7 +6,7 @@ and platform differences to achieve >95% code coverage.
 """
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -193,7 +193,7 @@ class TestRalphLiveDisplayUserInputIntegration:
         """NEEDS_INPUT event should prompt user and return response."""
         event = needs_input_event(
             question="What is your name?",
-            options=["Alice", "Bob"]
+            options=["Alice", "Bob"]  # type: ignore[list-item]
         )
 
         # Mock Prompt.ask to return test response
@@ -266,7 +266,7 @@ class TestPhaseExecutorStreamingIntegration:
             # Simulate AskUserQuestion tool asking for input
             user_response = yield needs_input_event(
                 question="What do you want to build?",
-                options=["Web App", "CLI Tool", "API Service"]
+                options=["Web App", "CLI Tool", "API Service"]  # type: ignore[list-item]
             )
 
             # Process the response
@@ -451,12 +451,14 @@ class TestCLIPhaseCommandsIntegration:
             mock_executor_cls.return_value = mock_executor
 
             # Patch where the function is defined
-            with patch('ralph.transitions.prompt_phase_transition', mock_prompt_transition):
-                with patch('ralph.cli.build') as mock_build:
-                    result = runner.invoke(
-                        app,
-                        ["plan", "-p", str(initialized_project), "--auto-timeout", "1"]
-                    )
+            with (
+                patch('ralph.transitions.prompt_phase_transition', mock_prompt_transition),
+                patch('ralph.cli.build'),
+            ):
+                result = runner.invoke(
+                    app,
+                    ["plan", "-p", str(initialized_project), "--auto-timeout", "1"]
+                )
 
         # Command should complete (may or may not transition based on mock behavior)
         assert result.exit_code in (0, 1)  # 0 = success, 1 = graceful exit
@@ -491,12 +493,14 @@ class TestCLIPhaseCommandsIntegration:
             mock_executor_cls.return_value = mock_executor
 
             # Patch where the function is defined
-            with patch('ralph.transitions.prompt_phase_transition', mock_prompt_transition):
-                with patch('ralph.cli.validate') as mock_validate:
-                    result = runner.invoke(
-                        app,
-                        ["build", "-p", str(initialized_project)]
-                    )
+            with (
+                patch('ralph.transitions.prompt_phase_transition', mock_prompt_transition),
+                patch('ralph.cli.validate'),
+            ):
+                result = runner.invoke(
+                    app,
+                    ["build", "-p", str(initialized_project)]
+                )
 
         # Command should complete (user declined transition)
         assert result.exit_code in (0, 1)
@@ -554,7 +558,7 @@ class TestPlatformSpecificBehavior:
             (Phase.VALIDATION, None),
         ]
 
-        async def test_transitions():
+        async def test_transitions() -> None:
             for current, expected_next in phase_transitions:
                 # Mock non-interactive mode for consistency
                 with patch('sys.stdin.isatty', return_value=False):
@@ -694,7 +698,11 @@ class TestCodeCoverageScenarios:
 
         # Test all tool types
         test_cases = [
-            ("Read", {"file_path": "/very/long/path/to/some/file/that/should/be/truncated.py"}, True),
+            (
+                "Read",
+                {"file_path": "/very/long/path/to/some/file/that/should/be/truncated.py"},
+                True,
+            ),
             ("Write", {"file_path": "/test.py", "content": "x" * 1000}, True),
             ("Edit", {"file_path": "/test.py", "old_string": "old", "new_string": "new"}, True),
             ("Bash", {"command": "very long command " * 20}, True),
@@ -703,13 +711,17 @@ class TestCodeCoverageScenarios:
             ("WebSearch", {"query": "test query"}, True),
             ("WebFetch", {"url": "https://example.com/very/long/url" + "x" * 100}, True),
             ("Task", {"description": "very long task description " * 10}, True),
-            ("AskUserQuestion", {"questions": [{"question": "Test?"}]}, False),  # Should return empty
+            (
+                "AskUserQuestion",
+                {"questions": [{"question": "Test?"}]},
+                False,  # Should return empty
+            ),
             ("ralph_mark_task_complete", {"task_id": "test", "notes": "done"}, True),
             ("UnknownTool", {"param": "value"}, False),  # Unknown tool, verbosity 1
         ]
 
         for tool_name, input_data, should_have_output in test_cases:
-            summary = display._summarize_tool_input(tool_name, input_data)
+            summary = display._summarize_tool_input(tool_name, input_data)  # type: ignore[arg-type]
             if should_have_output:
                 assert summary != ""
             else:
@@ -755,7 +767,7 @@ class TestCodeCoverageScenarios:
 
         # Test events with missing or None data (non-interactive events)
         non_interactive_events = [
-            StreamEvent(type=StreamEventType.ITERATION_END, data=None),
+            StreamEvent(type=StreamEventType.ITERATION_END, data=None),  # type: ignore[arg-type]
             StreamEvent(type=StreamEventType.TASK_COMPLETE, task_id=None, data={}),
             StreamEvent(type=StreamEventType.ERROR, error_message=None, data={}),
         ]

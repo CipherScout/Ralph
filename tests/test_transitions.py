@@ -340,10 +340,8 @@ class TestWorkflowCleanupPrompt:
             confirm_calls.append(kwargs.get("default", True))
             if len(confirm_calls) == 1:
                 return True  # Accept cleanup
-            elif len(confirm_calls) == 2:
-                return False  # Decline memory removal
             else:
-                return True  # Final confirmation
+                return len(confirm_calls) != 2
 
         monkeypatch.setattr("typer.confirm", mock_confirm)
 

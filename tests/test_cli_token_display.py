@@ -12,7 +12,7 @@ Test categories:
 
 The tests verify that the token display feature:
 1. Updates spinner with token and cost data from events
-2. Shows token information in console output 
+2. Shows token information in console output
 3. Handles large token counts with proper formatting
 4. Accumulates totals across multiple iterations
 5. Gracefully handles missing or malformed token data
@@ -20,7 +20,7 @@ The tests verify that the token display feature:
 
 Key verification criteria from SPEC-002:
 - Token count displayed alongside spinner animation
-- Token count updates in real-time as streaming progresses  
+- Token count updates in real-time as streaming progresses
 - Cost calculated using current Claude pricing
 - Counters reset at each iteration start
 - Display integrated with existing ThinkingSpinner
@@ -105,7 +105,12 @@ class TestRalphLiveDisplayTokens:
         # Capture console output by mocking print
         output_lines = []
         original_print = display.console.print
-        display.console.print = lambda *args, **kwargs: output_lines.append(str(args[0]) if args else "")
+        def _capture(*args, **kwargs):
+            output_lines.append(
+                str(args[0]) if args else ""
+            )
+
+        display.console.print = _capture
 
         try:
             display.handle_event(event)
@@ -136,7 +141,12 @@ class TestRalphLiveDisplayTokens:
         # Capture console output
         output_lines = []
         original_print = display.console.print
-        display.console.print = lambda *args, **kwargs: output_lines.append(str(args[0]) if args else "")
+        def _capture(*args, **kwargs):
+            output_lines.append(
+                str(args[0]) if args else ""
+            )
+
+        display.console.print = _capture
 
         try:
             display.handle_event(event)
@@ -332,24 +342,24 @@ class TestSDKEventFlowIntegration:
         """Test complete flow from iteration start to end with token tracking."""
         # Track all state changes
         state_changes = []
-        
+
         # Mock spinner methods to track calls
         original_start_spinner = display._start_spinner
         original_stop_spinner = display._stop_spinner
         original_update_spinner = display._update_spinner
-        
+
         def track_start_spinner():
             state_changes.append("start_spinner")
             original_start_spinner()
-            
+
         def track_stop_spinner():
             state_changes.append("stop_spinner")
             original_stop_spinner()
-            
+
         def track_update_spinner(tokens=0, cost=0.0):
             state_changes.append(f"update_spinner({tokens}, {cost})")
             original_update_spinner(tokens, cost)
-        
+
         display._start_spinner = track_start_spinner
         display._stop_spinner = track_stop_spinner
         display._update_spinner = track_update_spinner
@@ -399,7 +409,7 @@ class TestSDKEventFlowIntegration:
         assert "start_spinner" in state_changes
         assert "stop_spinner" in state_changes
         assert "update_spinner(1500, 0.0075)" in state_changes
-        
+
         # Verify display state
         assert display._total_tokens == 1500
         assert display._total_cost == 0.0075
@@ -430,7 +440,7 @@ class TestSDKEventFlowIntegration:
         # Verify accumulation
         expected_tokens = sum(data["tokens"] for data in iterations)
         expected_cost = sum(data["cost"] for data in iterations)
-        
+
         assert display._total_tokens == expected_tokens
         assert display._total_cost == expected_cost
 
@@ -451,7 +461,7 @@ class TestSDKEventFlowIntegration:
             phase="building",
             data={"success": True}  # No token data
         )
-        
+
         display.handle_event(event)
 
         # Should handle gracefully with zeros
@@ -480,7 +490,7 @@ class TestSDKEventFlowIntegration:
                 "cost_usd": None,  # Invalid
             }
         )
-        
+
         display.handle_event(event)
 
         # Should handle gracefully by defaulting to zeros
@@ -565,7 +575,7 @@ class TestEventDataValidation:
             "tokens_used": 1500,
             "cost_usd": 0.0075,
         }
-        
+
         # Test the internal method if it exists, or the actual behavior
         event = StreamEvent(
             type=StreamEventType.ITERATION_END,
@@ -573,19 +583,19 @@ class TestEventDataValidation:
             phase="building",
             data=event_data
         )
-        
+
         # Track the data that gets processed
         processed_data = {}
         original_update = display._update_spinner
-        
+
         def capture_update(tokens=0, cost=0.0):
             processed_data["tokens"] = tokens
             processed_data["cost"] = cost
             original_update(tokens, cost)
-            
+
         display._update_spinner = capture_update
         display.handle_event(event)
-        
+
         assert processed_data["tokens"] == 1500
         assert processed_data["cost"] == 0.0075
 
@@ -596,12 +606,12 @@ class TestEventDataValidation:
             "tokens_used": 1000,
             # Missing cost_usd
         }
-        
+
         processed_data = {}
         display._update_spinner = lambda tokens=0, cost=0.0: processed_data.update({
             "tokens": tokens, "cost": cost
         })
-        
+
         event = StreamEvent(
             type=StreamEventType.ITERATION_END,
             iteration=1,
@@ -609,19 +619,19 @@ class TestEventDataValidation:
             data=event_data
         )
         display.handle_event(event)
-        
+
         assert processed_data["tokens"] == 1000
         assert processed_data["cost"] == 0.0  # Should default to 0
 
     def test_extract_token_data_empty(self, display: RalphLiveDisplay) -> None:
         """Test extracting token data from empty event data."""
         event_data = {"success": True}  # No token data
-        
+
         processed_data = {}
         display._update_spinner = lambda tokens=0, cost=0.0: processed_data.update({
             "tokens": tokens, "cost": cost
         })
-        
+
         event = StreamEvent(
             type=StreamEventType.ITERATION_END,
             iteration=1,
@@ -629,7 +639,7 @@ class TestEventDataValidation:
             data=event_data
         )
         display.handle_event(event)
-        
+
         assert processed_data["tokens"] == 0
         assert processed_data["cost"] == 0.0
 
@@ -641,12 +651,12 @@ class TestEventDataValidation:
             "tokens_used": "1500",  # String
             "cost_usd": "0.0075",   # String
         }
-        
+
         processed_data = {}
         display._update_spinner = lambda tokens=0, cost=0.0: processed_data.update({
             "tokens": tokens, "cost": cost
         })
-        
+
         event = StreamEvent(
             type=StreamEventType.ITERATION_END,
             iteration=1,
@@ -654,7 +664,7 @@ class TestEventDataValidation:
             data=event_data
         )
         display.handle_event(event)
-        
+
         # Should convert strings to numbers or default to 0 if conversion fails
         assert isinstance(processed_data["tokens"], int)
         assert isinstance(processed_data["cost"], float)

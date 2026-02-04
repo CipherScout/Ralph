@@ -190,6 +190,43 @@ Comprehensive verification including:
 
 **Tools available**: Read, Glob, Grep, Bash, Task, WebFetch
 
+## Subagents
+
+Ralph includes specialized AI subagents that provide domain expertise during development. These subagents operate with read-only access and are automatically invoked through the `Task` tool based on the current phase.
+
+### Available Subagents
+
+| Subagent | Purpose | Available In |
+|----------|---------|--------------|
+| **Research Specialist** | Technology evaluation, pattern research, best practices | Discovery, Planning, Building |
+| **Code Reviewer** | Security analysis, code quality assessment | Building, Validation |
+| **Test Engineer** | Test strategy development, coverage analysis | Building, Validation |
+| **Documentation Agent** | API docs, technical documentation | Discovery, Planning, Validation |
+| **Product Analyst** | Requirements analysis, acceptance criteria validation | Discovery |
+
+### Security Model
+
+All subagents have read-only access and cannot:
+- Modify files (`Write`, `Edit`, `NotebookEdit`)
+- Execute commands (`Bash`)
+- Spawn other subagents (`Task`)
+
+Only the Research Specialist can access web resources (`WebSearch`, `WebFetch`) for gathering external information.
+
+### Usage
+
+Subagents are automatically available based on the current phase. Use the `Task` tool to delegate work:
+
+```
+Task(
+    subagent_type="research-specialist",
+    description="Evaluate authentication libraries",
+    prompt="Compare JWT vs session-based auth for our API"
+)
+```
+
+For complete documentation, see [docs/subagents.md](docs/subagents.md).
+
 ## Project Structure
 
 ```

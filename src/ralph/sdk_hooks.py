@@ -7,6 +7,7 @@ and uv enforcement.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from claude_agent_sdk import HookMatcher
@@ -19,6 +20,9 @@ if TYPE_CHECKING:
     HookInput = dict[str, Any]
     HookContext = dict[str, Any]
     HookJSONOutput = dict[str, Any]
+
+# Set up logger for structured logging
+logger = logging.getLogger(__name__)
 
 
 def _deny_response(reason: str, suggestion: str | None = None) -> dict[str, Any]:
@@ -215,6 +219,86 @@ def create_cost_limit_hook(
     return HookMatcher(matcher="*", hooks=[check_cost_limit])  # type: ignore[list-item]
 
 
+def create_task_tool_validation_hook(state: RalphState) -> HookMatcher:
+    """Create hook to validate Task tool subagent invocations.
+
+    This hook provides comprehensive validation for Task tool usage to ensure:
+    1. Subagent type is valid (exists in the subagent system)
+    2. Phase-specific subagent restrictions are enforced
+    3. Invalid subagents are blocked with helpful error messages
+    4. Subagent invocation attempts are logged for monitoring
+
+    Note: Parallel execution is managed by the Claude Agent SDK itself;
+    Ralph does not need to enforce concurrency limits at the hook level.
+
+    Args:
+        state: Current Ralph state (for phase access)
+
+    Returns:
+        HookMatcher for Task tool validation
+    """
+
+    async def validate_task_tool(
+        input_data: HookInput,
+        tool_use_id: str | None,
+        context: HookContext,
+    ) -> HookJSONOutput:
+        """Validate Task tool inputs against subagent policies."""
+        tool_name = input_data.get("tool_name", "")
+        if tool_name != "Task":
+            return _allow_response()
+
+        tool_input = input_data.get("tool_input", {})
+        subagent_type = tool_input.get("subagent_type")
+
+        # Log subagent invocation attempt
+        description = tool_input.get("description", "")
+        logger.info(
+            f"Subagent invocation attempt: type={subagent_type}, "
+            f"phase={state.current_phase.value}, description='{description}'"
+        )
+
+        # Check if subagent_type is provided
+        if not subagent_type:
+            return _deny_response(
+                "Task tool requires 'subagent_type' parameter",
+                "Specify a valid subagent type like 'code-reviewer' or 'research-specialist'"
+            )
+
+        # Import here to avoid circular imports
+        from typing import cast
+
+        from ralph.subagents import PHASE_SUBAGENT_CONFIG, SUBAGENT_SECURITY_CONSTRAINTS
+
+        # Check if subagent type is valid (exists in our configuration)
+        tool_permissions = cast(
+            dict[str, list[str]], SUBAGENT_SECURITY_CONSTRAINTS.get("tool_permissions", {})
+        )
+        if subagent_type not in tool_permissions:
+            return _deny_response(
+                f"Invalid subagent type: '{subagent_type}'",
+                f"Valid types: {', '.join(tool_permissions.keys())}"
+            )
+
+        # Check phase-specific restrictions
+        allowed_subagents_for_phase = PHASE_SUBAGENT_CONFIG.get(state.current_phase, [])
+        if subagent_type not in allowed_subagents_for_phase:
+            allowed_types_str = ', '.join(allowed_subagents_for_phase)
+            return _deny_response(
+                f"Subagent '{subagent_type}' not allowed in {state.current_phase.value} phase",
+                f"Allowed subagents for {state.current_phase.value}: {allowed_types_str}"
+            )
+
+        # All validations passed
+        logger.info(
+            f"Task tool validation passed: subagent_type={subagent_type}, "
+            f"phase={state.current_phase.value}"
+        )
+        return _allow_response()
+
+    return HookMatcher(matcher="Task", hooks=[validate_task_tool])  # type: ignore[list-item]
+
+
 def get_ralph_hooks(
     state: RalphState,
     max_cost_per_iteration: float = 10.0,
@@ -261,4 +345,45 @@ def get_minimal_hooks() -> dict[str, list[HookMatcher]]:
             create_bash_safety_hook(),
             create_uv_enforcement_hook(),
         ],
+    }
+
+
+def get_safety_hooks(
+    state: RalphState,
+    max_cost_per_iteration: float = 10.0,
+    include_phase_validation: bool = True,
+    include_cost_limits: bool = True,
+    include_task_validation: bool = True,
+) -> dict[str, list[HookMatcher]]:
+    """Get all safety hooks including Task tool validation.
+
+    This function provides the complete set of safety hooks for Ralph,
+    including the Task tool validation hook for subagent control.
+
+    Args:
+        state: Current Ralph state
+        max_cost_per_iteration: Maximum cost per iteration
+        include_phase_validation: Whether to include phase validation
+        include_cost_limits: Whether to include cost limit checks
+        include_task_validation: Whether to include Task tool validation
+
+    Returns:
+        Dict of hook event names to HookMatcher lists
+    """
+    pre_tool_use_hooks: list[HookMatcher] = [
+        create_bash_safety_hook(),
+        create_uv_enforcement_hook(),
+    ]
+
+    if include_phase_validation:
+        pre_tool_use_hooks.append(create_phase_validation_hook(state))
+
+    if include_cost_limits:
+        pre_tool_use_hooks.append(create_cost_limit_hook(state, max_cost_per_iteration))
+
+    if include_task_validation:
+        pre_tool_use_hooks.append(create_task_tool_validation_hook(state))
+
+    return {
+        "PreToolUse": pre_tool_use_hooks,
     }

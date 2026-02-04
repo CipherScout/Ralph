@@ -1,6 +1,7 @@
 """Tests for Claude SDK client wrapper."""
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -137,6 +138,128 @@ class TestIterationResult:
         assert result.task_completed is True
         assert result.task_id == "task-001"
         assert result.completion_notes == "All tests passed"
+
+    def test_subagent_tracking_fields_default_values(self) -> None:
+        """Subagent tracking fields have correct default values."""
+        result = IterationResult(success=True)
+
+        # Check that subagent tracking fields exist and have correct defaults
+        assert hasattr(result, "subagent_reports")
+        assert hasattr(result, "subagent_invocations")
+        assert hasattr(result, "subagent_costs")
+        assert hasattr(result, "subagent_metrics")
+
+        # Check default values
+        assert result.subagent_reports == {}
+        assert result.subagent_invocations == []
+        assert result.subagent_costs == {}
+        assert result.subagent_metrics == []
+
+        # Check they are mutable (not shared across instances)
+        result.subagent_reports["test"] = "value"
+        result.subagent_invocations.append("test")
+        result.subagent_costs["test"] = 1.0
+
+        # Import SubagentMetrics for the test
+        from datetime import datetime
+
+        from ralph.subagents import SubagentMetrics
+        result.subagent_metrics.append(SubagentMetrics(
+            subagent_type="test",
+            start_time=datetime.now()
+        ))
+
+        # Create another instance to verify no sharing
+        result2 = IterationResult(success=False)
+        assert result2.subagent_reports == {}
+        assert result2.subagent_invocations == []
+        assert result2.subagent_costs == {}
+        assert result2.subagent_metrics == []
+
+    def test_subagent_tracking_fields_with_data(self) -> None:
+        """Subagent tracking fields accept data correctly."""
+        result = IterationResult(
+            success=True,
+            subagent_reports={
+                "code-reviewer": "Code looks good",
+                "test-engineer": "All tests passed"
+            },
+            subagent_invocations=[
+                "code-reviewer:review-implementation",
+                "test-engineer:run-tests"
+            ],
+            subagent_costs={
+                "code-reviewer": 0.05,
+                "test-engineer": 0.03
+            }
+        )
+
+        assert result.subagent_reports["code-reviewer"] == "Code looks good"
+        assert result.subagent_reports["test-engineer"] == "All tests passed"
+        assert len(result.subagent_invocations) == 2
+
+    def test_subagent_metrics_field(self) -> None:
+        """Subagent metrics field stores SubagentMetrics correctly."""
+        from datetime import datetime, timedelta
+
+        from ralph.subagents import SubagentMetrics
+
+        # Create SubagentMetrics instances
+        start_time = datetime.now()
+        end_time = start_time + timedelta(seconds=30)
+
+        metrics1 = SubagentMetrics(
+            subagent_type="research-specialist",
+            start_time=start_time,
+            end_time=end_time,
+            tokens_used=1500,
+            cost_usd=0.075,
+            success=True,
+            error=None,
+            report_size_chars=2000
+        )
+
+        metrics2 = SubagentMetrics(
+            subagent_type="code-reviewer",
+            start_time=start_time + timedelta(seconds=35),
+            end_time=end_time + timedelta(seconds=45),
+            tokens_used=800,
+            cost_usd=0.04,
+            success=False,
+            error="Analysis incomplete",
+            report_size_chars=0
+        )
+
+        # Create IterationResult with metrics
+        result = IterationResult(
+            success=True,
+            subagent_metrics=[metrics1, metrics2]
+        )
+
+        # Verify metrics are stored correctly
+        assert len(result.subagent_metrics) == 2
+        assert result.subagent_metrics[0] == metrics1
+        assert result.subagent_metrics[1] == metrics2
+
+        # Verify metrics content
+        assert result.subagent_metrics[0].subagent_type == "research-specialist"
+        assert result.subagent_metrics[0].success is True
+        assert result.subagent_metrics[0].tokens_used == 1500
+        assert result.subagent_metrics[0].cost_usd == 0.075
+
+        assert result.subagent_metrics[1].subagent_type == "code-reviewer"
+        assert result.subagent_metrics[1].success is False
+        assert result.subagent_metrics[1].error == "Analysis incomplete"
+
+        # Test mutable operations
+        start_time2 = datetime.now()
+        metrics3 = SubagentMetrics(
+            subagent_type="test-engineer",
+            start_time=start_time2
+        )
+        result.subagent_metrics.append(metrics3)
+        assert len(result.subagent_metrics) == 3
+        assert result.subagent_metrics[2].subagent_type == "test-engineer"
 
 class TestModelPricing:
     """Tests for model pricing constants."""
@@ -905,6 +1028,133 @@ class TestUserInputCallbacks:
         assert result.updated_input["answers"]["Q2?"] == "answer2"
 
 
+class TestRalphSDKClientSubagentIntegration:
+    """Tests for RalphSDKClient subagent integration."""
+
+    @patch("ralph.sdk_client._get_ralph_hooks")
+    @patch("ralph.sdk_client._get_mcp_server")
+    @patch("ralph.sdk_client.get_subagents_for_phase")
+    def test_build_options_includes_task_tool(
+        self, mock_get_subagents: MagicMock, mock_mcp: MagicMock, mock_hooks: MagicMock
+    ) -> None:
+        """_build_options includes Task tool in allowed_tools list."""
+        mock_hooks.return_value = {"PreToolUse": []}
+        mock_mcp.return_value = None
+        mock_get_subagents.return_value = {}
+
+        state = create_mock_state(phase=Phase.BUILDING)
+        client = RalphSDKClient(state=state)
+        client.mcp_servers = {}
+
+        options = client._build_options()
+
+        # Task tool should be in allowed_tools
+        assert "Task" in options.allowed_tools
+
+    @patch("ralph.sdk_client._get_ralph_hooks")
+    @patch("ralph.sdk_client._get_mcp_server")
+    @patch("ralph.sdk_client.get_subagents_for_phase")
+    def test_build_options_calls_get_subagents_for_phase(
+        self, mock_get_subagents: MagicMock, mock_mcp: MagicMock, mock_hooks: MagicMock
+    ) -> None:
+        """_build_options calls get_subagents_for_phase with correct parameters."""
+        mock_hooks.return_value = {"PreToolUse": []}
+        mock_mcp.return_value = None
+        mock_get_subagents.return_value = {}
+
+        state = create_mock_state(phase=Phase.BUILDING)
+        config = create_mock_config()
+        client = RalphSDKClient(state=state, config=config)
+        client.mcp_servers = {}
+
+        client._build_options()
+
+        # Should call get_subagents_for_phase with current phase and config
+        mock_get_subagents.assert_called_once_with(Phase.BUILDING, config)
+
+    @patch("ralph.sdk_client._get_ralph_hooks")
+    @patch("ralph.sdk_client._get_mcp_server")
+    @patch("ralph.sdk_client.get_subagents_for_phase")
+    def test_build_options_passes_agents_to_claude_agent_options(
+        self, mock_get_subagents: MagicMock, mock_mcp: MagicMock, mock_hooks: MagicMock
+    ) -> None:
+        """_build_options passes subagents as agents parameter to ClaudeAgentOptions."""
+        from claude_agent_sdk import AgentDefinition
+
+        mock_hooks.return_value = {"PreToolUse": []}
+        mock_mcp.return_value = None
+
+        # Mock subagents return value
+        mock_subagents = {
+            "code-reviewer": AgentDefinition(
+                description="Test code reviewer",
+                prompt="Test prompt",
+                tools=["Read", "Grep"],
+                model="sonnet"
+            ),
+            "research-specialist": AgentDefinition(
+                description="Test researcher",
+                prompt="Test research prompt",
+                tools=["Read", "WebSearch"],
+                model="sonnet"
+            )
+        }
+        mock_get_subagents.return_value = mock_subagents
+
+        state = create_mock_state(phase=Phase.BUILDING)
+        client = RalphSDKClient(state=state)
+        client.mcp_servers = {}
+
+        options = client._build_options()
+
+        # Should pass the subagents as agents parameter
+        assert hasattr(options, "agents")
+        assert options.agents == mock_subagents
+
+    @patch("ralph.sdk_client._get_ralph_hooks")
+    @patch("ralph.sdk_client._get_mcp_server")
+    @patch("ralph.sdk_client.get_subagents_for_phase")
+    def test_build_options_handles_empty_subagents(
+        self, mock_get_subagents: MagicMock, mock_mcp: MagicMock, mock_hooks: MagicMock
+    ) -> None:
+        """_build_options handles empty subagents dict correctly."""
+        mock_hooks.return_value = {"PreToolUse": []}
+        mock_mcp.return_value = None
+        mock_get_subagents.return_value = {}
+
+        state = create_mock_state(phase=Phase.VALIDATION)
+        client = RalphSDKClient(state=state)
+        client.mcp_servers = {}
+
+        options = client._build_options()
+
+        # Should pass empty dict as agents parameter
+        assert hasattr(options, "agents")
+        assert options.agents == {}
+
+    @patch("ralph.sdk_client._get_ralph_hooks")
+    @patch("ralph.sdk_client._get_mcp_server")
+    @patch("ralph.sdk_client.get_subagents_for_phase")
+    def test_build_options_respects_phase_override_for_subagents(
+        self, mock_get_subagents: MagicMock, mock_mcp: MagicMock, mock_hooks: MagicMock
+    ) -> None:
+        """_build_options uses phase override when getting subagents."""
+        mock_hooks.return_value = {"PreToolUse": []}
+        mock_mcp.return_value = None
+        mock_get_subagents.return_value = {}
+
+        state = create_mock_state(phase=Phase.BUILDING)
+        config = create_mock_config()
+        client = RalphSDKClient(state=state, config=config)
+        client.mcp_servers = {}
+
+        # Override phase to VALIDATION
+        client._build_options(phase=Phase.VALIDATION)
+
+        # Should call get_subagents_for_phase with overridden phase
+        mock_get_subagents.assert_called_once_with(Phase.VALIDATION, config)
+
+
 class TestRalphSDKClientWithCallbacks:
     """Tests for RalphSDKClient with UserInputCallbacks."""
 
@@ -1015,7 +1265,7 @@ class TestTokenExtraction:
         # Mock a ResultMessage-like structure
         class MockResultMessage:
             total_cost_usd: float | None = 0.0150
-            usage: dict | None = {"input_tokens": 1000, "output_tokens": 500}
+            usage: dict[str, Any] | None = {"input_tokens": 1000, "output_tokens": 500}
 
         msg = MockResultMessage()
         # Direct attribute access should work
@@ -1071,7 +1321,7 @@ class TestCostTracking:
         # Simulate a message with zero cost
         class MockResultMessage:
             total_cost_usd: float = 0.0  # Valid zero cost
-            usage: dict = {"input_tokens": 0, "output_tokens": 0}
+            usage: dict[str, Any] = {"input_tokens": 0, "output_tokens": 0}
 
         msg = MockResultMessage()
 
@@ -1096,8 +1346,8 @@ class TestCostTracking:
 
         class MockAssistantMessage:
             id: str = "msg_001"
-            content: list = []
-            usage: dict | None = {
+            content: list[Any] = []
+            usage: dict[str, Any] | None = {
                 "input_tokens": 500,
                 "output_tokens": 200,
                 "cache_read_input_tokens": 100,
@@ -1132,7 +1382,7 @@ class TestCostTracking:
         # Simulate ResultMessage with cumulative totals
         class MockResultMessage:
             total_cost_usd: float = 0.025  # Authoritative total
-            usage: dict = {
+            usage: dict[str, Any] = {
                 "input_tokens": 1000,  # Authoritative total (not additive)
                 "output_tokens": 400,
                 "cache_read_input_tokens": 50,
@@ -1241,7 +1491,7 @@ class TestCostTracking:
 
     def test_handles_empty_usage_dict(self) -> None:
         """Empty usage dict should return zeros, not crash."""
-        usage: dict = {}
+        usage: dict[str, Any] = {}
 
         input_tokens = usage.get("input_tokens", 0)
         output_tokens = usage.get("output_tokens", 0)
@@ -1296,21 +1546,21 @@ class TestTokenUsageInEvents:
         }
         mock_result_msg.total_cost_usd = None  # Test cost calculation
 
-        async def mock_receive():
+        async def mock_receive() -> Any:
             yield mock_result_msg
 
         # Create proper async context manager mock
         class MockSDKClient:
-            async def query(self, prompt):
+            async def query(self, prompt: str) -> None:
                 pass
 
-            def receive_response(self):
+            def receive_response(self) -> Any:
                 return mock_receive()
 
-            async def __aenter__(self):
+            async def __aenter__(self) -> Any:
                 return self
 
-            async def __aexit__(self, exc_type, exc_val, exc_tb):
+            async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
                 pass
 
         mock_sdk_client = MockSDKClient()
@@ -1361,21 +1611,21 @@ class TestTokenUsageInEvents:
         mock_result_msg.usage = None
         mock_result_msg.total_cost_usd = None
 
-        async def mock_receive():
+        async def mock_receive() -> Any:
             yield mock_result_msg
 
         # Create proper async context manager mock
         class MockSDKClient:
-            async def query(self, prompt):
+            async def query(self, prompt: str) -> None:
                 pass
 
-            def receive_response(self):
+            def receive_response(self) -> Any:
                 return mock_receive()
 
-            async def __aenter__(self):
+            async def __aenter__(self) -> Any:
                 return self
 
-            async def __aexit__(self, exc_type, exc_val, exc_tb):
+            async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
                 pass
 
         mock_sdk_client = MockSDKClient()
@@ -1419,21 +1669,21 @@ class TestTokenUsageInEvents:
         }
         mock_result_msg.total_cost_usd = 0.0234  # SDK-provided cost
 
-        async def mock_receive():
+        async def mock_receive() -> Any:
             yield mock_result_msg
 
         # Create proper async context manager mock
         class MockSDKClient:
-            async def query(self, prompt):
+            async def query(self, prompt: str) -> None:
                 pass
 
-            def receive_response(self):
+            def receive_response(self) -> Any:
                 return mock_receive()
 
-            async def __aenter__(self):
+            async def __aenter__(self) -> Any:
                 return self
 
-            async def __aexit__(self, exc_type, exc_val, exc_tb):
+            async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
                 pass
 
         mock_sdk_client = MockSDKClient()

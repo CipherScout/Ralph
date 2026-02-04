@@ -57,6 +57,30 @@ class BuildConfig:
 
 
 @dataclass
+class SubagentConfig:
+    """Configuration for Ralph subagents."""
+
+    model_mapping: dict[str, str] = field(default_factory=lambda: {
+        # Sonnet for complex analysis and review tasks
+        "research-specialist": "sonnet",
+        "code-reviewer": "sonnet",
+        "test-engineer": "sonnet",
+        # Haiku for efficient documentation and analysis tasks
+        "documentation-agent": "haiku",
+        "product-analyst": "haiku",
+    })
+    max_parallel: int = 2
+    timeout_seconds: int = 300
+    enabled_subagents: list[str] = field(default_factory=lambda: [
+        "research-specialist",
+        "code-reviewer",
+        "test-engineer",
+        "documentation-agent",
+        "product-analyst",
+    ])
+
+
+@dataclass
 class ProjectConfig:
     """Project-level configuration."""
 
@@ -77,6 +101,7 @@ class RalphConfig:
     build: BuildConfig = field(default_factory=BuildConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
     cost_limits: CostLimits = field(default_factory=CostLimits)
+    subagents: SubagentConfig = field(default_factory=SubagentConfig)
 
     # Phase-specific configs
     discovery: PhaseConfig = field(default_factory=PhaseConfig)
@@ -106,6 +131,19 @@ def _parse_phase_config(data: dict[str, Any]) -> PhaseConfig:
         max_iterations=data.get("max_iterations", 100),
         require_human_approval=data.get("require_human_approval", False),
         backpressure=data.get("backpressure", []),
+    )
+
+
+def _parse_subagent_config(data: dict[str, Any]) -> SubagentConfig:
+    """Parse subagent configuration from dict."""
+    # Get default values from the dataclass
+    defaults = SubagentConfig()
+
+    return SubagentConfig(
+        model_mapping=data.get("model_mapping", defaults.model_mapping),
+        max_parallel=data.get("max_parallel", defaults.max_parallel),
+        timeout_seconds=data.get("timeout_seconds", defaults.timeout_seconds),
+        enabled_subagents=data.get("enabled_subagents", defaults.enabled_subagents),
     )
 
 
@@ -177,6 +215,11 @@ def load_config(project_root: Path) -> RalphConfig:
                 if "validation" in phases:
                     config.validation = _parse_phase_config(phases["validation"])
 
+            # Parse subagents config
+            if "subagents" in data:
+                subagents = data["subagents"]
+                config.subagents = _parse_subagent_config(subagents)
+
         except yaml.YAMLError as e:
             logger.warning("Failed to parse config file %s: %s. Using defaults.", config_path, e)
 
@@ -246,6 +289,12 @@ def save_config(config: RalphConfig, project_root: Path) -> Path:
             "validation": {
                 "require_human_approval": config.validation.require_human_approval,
             },
+        },
+        "subagents": {
+            "model_mapping": config.subagents.model_mapping,
+            "max_parallel": config.subagents.max_parallel,
+            "timeout_seconds": config.subagents.timeout_seconds,
+            "enabled_subagents": config.subagents.enabled_subagents,
         },
         "safety": {
             "sandbox_enabled": config.safety.sandbox_enabled,

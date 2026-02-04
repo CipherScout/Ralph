@@ -465,8 +465,10 @@ class TestCompletionSignalsPersistence:
         assert loaded.is_phase_complete("discovery")
         assert loaded.is_phase_complete("planning")
         assert not loaded.is_phase_complete("building")
-        assert loaded.completion_signals["discovery"]["summary"] == "Discovery complete with 3 specs"
-        assert loaded.completion_signals["planning"]["artifacts"]["task_count"] == 10
+        disc_summary = loaded.completion_signals["discovery"]["summary"]
+        assert disc_summary == "Discovery complete with 3 specs"
+        plan_count = loaded.completion_signals["planning"]
+        assert plan_count["artifacts"]["task_count"] == 10
 
     def test_missing_completion_signals_defaults_to_empty(self, temp_project: Path) -> None:
         """Missing completion_signals in old state files defaults to empty dict."""
